@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Cpu, Terminal, RefreshCw, Layers, ShieldCheck, HeartHandshake, AlertCircle, Sparkles } from "lucide-react";
+import { Cpu, Terminal, RefreshCw, Layers, ShieldCheck, HeartHandshake, AlertCircle, Sparkles, X } from "lucide-react";
 import { BotConfig, BotState, ActivePosition, ClosedTrade, BotLog, StockSetup } from "./types";
 import Header from "./components/Header";
 import Settings from "./components/Settings";
@@ -14,6 +14,12 @@ import { doc, setDoc } from "firebase/firestore";
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+
+  // User Consent Agreements for Financial Disclaimers & Liability Waiver
+  const [consentedTerms, setConsentedTerms] = useState(false);
+  const [consentedRisk, setConsentedRisk] = useState(false);
+  const [showModal, setShowModal] = useState<"terms" | "privacy" | null>(null);
+  const [showConsentError, setShowConsentError] = useState(false);
 
   const [config, setConfig] = useState<BotConfig>({
     ALPACA_API_KEY: "",
@@ -255,11 +261,11 @@ export default function App() {
 
   if (!user) {
     return (
-      <div className="bg-theme-bg min-h-screen flex items-center justify-center relative overflow-hidden border-[12px] border-theme-input px-4 antialiased">
+      <div className="bg-theme-bg min-h-screen flex items-center justify-center relative overflow-hidden border-[12px] border-theme-input px-4 sm:px-6 py-12 antialiased">
         <div className="absolute inset-0 bg-[linear-gradient(to_right,#1f2937_1px,transparent_1px),linear-gradient(to_bottom,#1f2937_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] opacity-30" />
         
-        <div className="max-w-md w-full relative z-10">
-          <div className="bg-theme-panel border border-theme-border rounded-xl p-8 lg:p-10 shadow-2xl space-y-6">
+        <div className="max-w-md w-full relative z-10 my-auto">
+          <div className="bg-theme-panel border border-theme-border rounded-xl p-6 sm:p-8 lg:p-10 shadow-2xl space-y-6">
             <div className="flex flex-col items-center gap-4 text-center">
               <div className="w-16 h-16 bg-theme-accent/10 border border-theme-accent/20 rounded-2xl flex items-center justify-center text-theme-accent shadow-inner">
                 <Cpu className="w-8 h-8" />
@@ -274,9 +280,75 @@ export default function App() {
               A professional decentralized cloud trading terminal. Connect and execute same-size swing metrics across multiple secure portfolio environments automatically.
             </p>
 
-            <div className="pt-2">
+            {/* Terms of Service & Privacy Risk Consent Agreement Controls */}
+            <div className="space-y-3 bg-theme-input/50 border border-theme-border p-4 rounded-lg">
+              <p className="text-[9.5px] text-gray-400 font-mono uppercase tracking-wider font-bold border-b border-theme-border/50 pb-1.5 flex items-center gap-1.5">
+                <ShieldCheck className="w-3.5 h-3.5 text-theme-accent" /> Legal Agreement & Consent Node
+              </p>
+              
+              <label className="flex items-start gap-2.5 cursor-pointer select-none group text-[11px] text-gray-300">
+                <input
+                  type="checkbox"
+                  checked={consentedTerms}
+                  onChange={(e) => {
+                    setConsentedTerms(e.target.checked);
+                    if (e.target.checked && consentedRisk) setShowConsentError(false);
+                  }}
+                  className="mt-0.5 accent-theme-accent h-3.5 w-3.5 rounded bg-black/40 border-theme-border focus:ring-0 cursor-pointer shrink-0"
+                />
+                <span className="leading-normal">
+                  I agree to the{" "}
+                  <button 
+                    type="button" 
+                    onClick={(e) => { e.preventDefault(); setShowModal("terms"); }}
+                    className="text-theme-accent hover:underline font-bold focus:outline-none"
+                  >
+                    Terms of Service (ToS)
+                  </button>{" "}
+                  and{" "}
+                  <button 
+                    type="button" 
+                    onClick={(e) => { e.preventDefault(); setShowModal("privacy"); }}
+                    className="text-theme-accent hover:underline font-bold focus:outline-none"
+                  >
+                    Privacy Policy
+                  </button>.
+                </span>
+              </label>
+
+              <label className="flex items-start gap-2.5 cursor-pointer select-none group text-[11px] text-gray-300">
+                <input
+                  type="checkbox"
+                  checked={consentedRisk}
+                  onChange={(e) => {
+                    setConsentedRisk(e.target.checked);
+                    if (e.target.checked && consentedTerms) setShowConsentError(false);
+                  }}
+                  className="mt-0.5 accent-theme-accent h-3.5 w-3.5 rounded bg-black/40 border-theme-border focus:ring-0 cursor-pointer shrink-0"
+                />
+                <span className="leading-normal">
+                  I acknowledge <strong>this system is never guaranteed to make money for me</strong>, and I hold developers <strong>absolutely not liable</strong> for any bad trades or capital loss.
+                </span>
+              </label>
+            </div>
+
+            {/* Error messaging inside the login container */}
+            {showConsentError && (
+              <div className="bg-rose-500/10 border border-rose-500/20 text-rose-300 text-[10.5px] p-3 rounded-lg flex items-start gap-2.5 font-mono uppercase leading-normal">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+                <span>Consent Required: Please read and check both validation boxes before connecting.</span>
+              </div>
+            )}
+
+            <div className="pt-1">
               <button
                 onClick={async () => {
+                  if (!consentedTerms || !consentedRisk) {
+                    setShowConsentError(true);
+                    triggerBanner("Consent to the critical ToS & Liability Waiver is required to proceed.", "error");
+                    return;
+                  }
+                  setShowConsentError(false);
                   try {
                     await signInWithPopup(auth, googleProvider);
                     triggerBanner("Successfully signed in with Google auth node.", "success");
@@ -284,11 +356,15 @@ export default function App() {
                     triggerBanner(`Auth failed: ${err.message}`, "error");
                   }
                 }}
-                className="w-full bg-white text-black hover:bg-gray-100 transition-all duration-150 py-3 rounded-lg text-xs font-black uppercase tracking-wider flex items-center justify-center gap-3 cursor-pointer shadow-lg active:scale-98"
+                className={`w-full transition-all duration-150 py-3 rounded-lg text-xs font-black uppercase tracking-wider flex items-center justify-center gap-3 cursor-pointer shadow-lg active:scale-98 ${
+                  consentedTerms && consentedRisk 
+                    ? "bg-white text-black hover:bg-gray-100" 
+                    : "bg-gray-600/30 text-gray-500 border border-gray-600/20 cursor-not-allowed"
+                }`}
               >
                 <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
                   <path
-                    fill="#EA4335"
+                    fill={consentedTerms && consentedRisk ? "#EA4335" : "#6b7280"}
                     d="M12.24 10.285V14.4h6.887c-.275 1.565-1.88 4.6-6.887 4.6-4.33 0-7.859-3.58-7.859-8s3.53-8 7.859-8c2.46 0 4.105 1.025 5.047 1.926l3.243-3.12C18.425 2.05 15.635 1 12.24 1 5.922 1 .8 6.122.8 12.4s5.122 11.4 11.44 11.4c6.6 0 11-4.635 11-11.19 0-.75-.08-1.32-.18-1.885H12.24z"
                   />
                 </svg>
@@ -307,6 +383,112 @@ export default function App() {
             </div>
           </div>
         </div>
+
+        {/* Premium Overlay Disclosures Modal */}
+        {showModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4 animate-fade-in">
+            <div className="bg-theme-panel border border-theme-border rounded-xl shadow-2xl max-w-lg w-full max-h-[85vh] flex flex-col overflow-hidden animate-scale-up">
+              <div className="flex justify-between items-center bg-theme-input p-4 border-b border-theme-border">
+                <h3 className="text-xs sm:text-sm font-bold uppercase tracking-wider font-mono text-white flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-theme-accent" />
+                  {showModal === "terms" ? "Terms of Service & Liability Waiver" : "S-A Sentry Privacy Directive"}
+                </h3>
+                <button 
+                  onClick={() => setShowModal(null)}
+                  className="text-gray-400 hover:text-white transition-colors p-1 rounded-md hover:bg-white/5"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              
+              <div className="p-6 overflow-y-auto font-sans text-xs text-gray-300 space-y-4 leading-relaxed custom-scrollbar bg-theme-panel">
+                {showModal === "terms" ? (
+                  <>
+                    <p className="text-rose-400 font-bold uppercase tracking-wider border-b border-rose-900/40 pb-2 flex items-center gap-1.5 font-mono text-[10px]">
+                      ⚠️ STRICT DISCLAIMER: NO FINANCIAL REMEDIES & COMPLETELY DISCLAIMED LIABILITY
+                    </p>
+                    <div className="space-y-4 text-gray-300">
+                      <div>
+                        <h4 className="font-bold text-white mb-1">1. Experimental Software Suite - Under No Circumstances Make Guarantees</h4>
+                        <p>
+                          This platform operates solely as a personalized automated testing and execution interface. Under no circumstances does this application guarantee profitable trading outcomes, positive capital returns, or specific portfolio results.
+                        </p>
+                      </div>
+                      
+                      <div className="bg-rose-500/10 border border-rose-500/20 p-3.5 rounded-lg text-rose-300 font-medium">
+                        <span className="font-bold uppercase text-[10px] block mb-1 font-mono text-white">Full Consent & Clear Affirmation:</span>
+                        You expressly declare and fully agree that you are <strong className="text-white underline">NOT trusting this software to make money for you</strong> with any level of certainty or probability. You understand that automated trading models are susceptible to massive drawdowns, technical failures, and rapid loss of capital.
+                      </div>
+
+                      <div>
+                        <h4 className="font-bold text-white mb-1">2. Absolute Absence of Liability for "Bad Trades"</h4>
+                        <p>
+                          The developers, hosts, authors, and operators of this software are entirely held harmless from your trading outcomes. We hold zero liability for "bad trades", technical execution bugs, unexpected software crashes, API response latencies, market slippage, broker errors, incorrect data feeds, or manual execution errors.
+                        </p>
+                      </div>
+
+                      <div>
+                        <h4 className="font-bold text-white mb-1">3. Speculative Financial Jeopardy Statement</h4>
+                        <p>
+                          Financial asset trading is highly speculative. Never input API values, access codes, or credentials connected to live funds that you are not fully prepared to lose in their entirety.
+                        </p>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-theme-accent font-bold uppercase tracking-wider border-b border-theme-border/60 pb-2 flex items-center gap-1.5 font-mono text-[10px]">
+                      🔒 SECURITY & DATA PROTECTION PROTOCOLS
+                    </p>
+                    <div className="space-y-4 text-gray-300">
+                      <div>
+                        <h4 className="font-bold text-white mb-1">1. Client-to-Broker Encryption Standard</h4>
+                        <p>
+                          Your connection details, including key identifiers and sandbox/live credentials, are strictly processed through secure backend instances directly to the designated broker REST nodes. No plain text secrets are saved in your browser files.
+                        </p>
+                      </div>
+
+                      <div>
+                        <h4 className="font-bold text-white mb-1">2. Identity Alignment</h4>
+                        <p>
+                          Your Google Profile identity (authorized email and unique token) is utilized solely to authorize database-bound security records so we can safely align configurations across user spaces.
+                        </p>
+                      </div>
+
+                      <div>
+                        <h4 className="font-bold text-white mb-1">3. Privacy Ethics Code</h4>
+                        <p>
+                          We never sell, rent, disclose, or share telemetry data, private system settings, transaction statistics, or emails to external commercial advertisers or brokers.
+                        </p>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+              
+              <div className="p-4 bg-theme-input/60 border-t border-theme-border flex justify-end gap-3">
+                <button
+                  onClick={() => setShowModal(null)}
+                  className="px-4 py-2 text-gray-400 hover:text-white text-xs font-bold uppercase transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    if (showModal === "terms") {
+                      setConsentedTerms(true);
+                      setConsentedRisk(true);
+                    }
+                    setShowModal(null);
+                  }}
+                  className="bg-white hover:bg-gray-100 text-black px-4.5 py-2.5 rounded-lg text-xs font-black uppercase tracking-wider transition-colors shadow-lg active:scale-97"
+                >
+                  {showModal === "terms" ? "I Accept Policies & Acknowledge Risk" : "Understood"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

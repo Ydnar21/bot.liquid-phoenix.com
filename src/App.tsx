@@ -7,8 +7,14 @@ import ActivePositionPanel from "./components/ActivePositionPanel";
 import ScreenerPanel from "./components/ScreenerPanel";
 import LogsConsole from "./components/LogsConsole";
 import PerformanceHistory from "./components/PerformanceHistory";
+import { auth, googleProvider, signInWithPopup, signOut, db } from "./firebase";
+import { onAuthStateChanged, User } from "firebase/auth";
+import { doc, setDoc } from "firebase/firestore";
 
 export default function App() {
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
   const [config, setConfig] = useState<BotConfig>({
     ALPACA_API_KEY: "",
     ALPACA_SECRET_KEY: "",
@@ -53,8 +59,34 @@ export default function App() {
     }, 5000);
   };
 
+  // Auth Status sync listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (u) => {
+      if (u) {
+        setUser(u);
+        try {
+          const userRef = doc(db, "users", u.uid);
+          await setDoc(userRef, {
+            uid: u.uid,
+            email: u.email || "",
+            displayName: u.displayName || "Anonymous",
+            photoURL: u.photoURL || "",
+            lastLogin: new Date().toISOString()
+          }, { merge: true });
+        } catch (e: any) {
+          console.error("Firestore user profile sync error:", e.message);
+        }
+      } else {
+        setUser(null);
+      }
+      setAuthLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
   // API Call Fetchers
   const fetchAllStates = async () => {
+    if (!auth.currentUser) return; // Secure state fetch guard
     try {
       const [configRes, stateRes, posRes, histRes, setupsRes, logsRes] = await Promise.all([
         fetch("/api/config").then((r) => r.json()),
@@ -77,13 +109,15 @@ export default function App() {
   };
 
   useEffect(() => {
-    fetchAllStates();
-    // Poll updates every 10 seconds to render logs, real-time prices & executions
-    const interval = setInterval(() => {
+    if (user) {
       fetchAllStates();
-    }, 10000);
-    return () => clearInterval(interval);
-  }, []);
+      // Poll updates every 10 seconds to render logs, real-time prices & executions
+      const interval = setInterval(() => {
+        fetchAllStates();
+      }, 10000);
+      return () => clearInterval(interval);
+    }
+  }, [user]);
 
   const handleSaveConfig = async (updated: Partial<BotConfig>) => {
     try {
@@ -107,12 +141,6 @@ export default function App() {
   const handleToggleBot = async () => {
     const nextRunningStatus = !config.isBotRunning;
 
-    // Guard: Enforce API credentials check
-    if (nextRunningStatus && (!config.ALPACA_API_KEY || !config.ALPACA_SECRET_KEY)) {
-      triggerBanner("Credentials Required. Fill in Alpaca API Key & Secret before starting trading.", "error");
-      return;
-    }
-
     try {
       const res = await fetch("/api/config", {
         method: "POST",
@@ -122,7 +150,7 @@ export default function App() {
       const data = await res.json();
       if (data.success) {
         triggerBanner(
-          nextRunningStatus ? "Autonomous swing trading bot scheduled 24/7!" : "Bot activity paused.",
+          nextRunningStatus ? "Autonomous swing trading bot active and scheduled!" : "Bot activity paused.",
           "success"
         );
         fetchAllStates();
@@ -133,12 +161,6 @@ export default function App() {
   };
 
   const handleTriggerScan = async () => {
-    // Guard: Enforce key requirement for historical bars scanner access
-    if (!config.ALPACA_API_KEY || !config.ALPACA_SECRET_KEY) {
-      triggerBanner("Alpaca credentials are required to carry out scan calls.", "error");
-      return;
-    }
-
     setIsScanning(true);
     triggerBanner("Starting stock universe scanner across S&P 500 + Nasdaq 100...", "success");
 
@@ -220,6 +242,75 @@ export default function App() {
     }
   };
 
+  if (authLoading) {
+    return (
+      <div className="bg-theme-bg min-h-screen flex items-center justify-center border-[12px] border-theme-input">
+        <div className="flex flex-col items-center gap-4 text-center">
+          <RefreshCw className="w-8 h-8 text-theme-accent animate-spin" />
+          <div className="font-mono text-xs text-gray-550 uppercase tracking-widest">Verifying connection to security clusters...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="bg-theme-bg min-h-screen flex items-center justify-center relative overflow-hidden border-[12px] border-theme-input px-4 antialiased">
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,#1f2937_1px,transparent_1px),linear-gradient(to_bottom,#1f2937_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] opacity-30" />
+        
+        <div className="max-w-md w-full relative z-10">
+          <div className="bg-theme-panel border border-theme-border rounded-xl p-8 lg:p-10 shadow-2xl space-y-6">
+            <div className="flex flex-col items-center gap-4 text-center">
+              <div className="w-16 h-16 bg-theme-accent/10 border border-theme-accent/20 rounded-2xl flex items-center justify-center text-theme-accent shadow-inner">
+                <Cpu className="w-8 h-8" />
+              </div>
+              <div className="space-y-1">
+                <h1 className="text-xl font-bold tracking-tight uppercase text-white font-display">Swing Trading AI Portal</h1>
+                <p className="text-[10px] text-theme-accent font-mono tracking-widest uppercase">Autonomous Copy Portfolio Sentry</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-gray-400 text-center leading-relaxed font-sans font-medium">
+              A professional decentralized cloud trading terminal. Connect and execute same-size swing metrics across multiple secure portfolio environments automatically.
+            </p>
+
+            <div className="pt-2">
+              <button
+                onClick={async () => {
+                  try {
+                    await signInWithPopup(auth, googleProvider);
+                    triggerBanner("Successfully signed in with Google auth node.", "success");
+                  } catch (err: any) {
+                    triggerBanner(`Auth failed: ${err.message}`, "error");
+                  }
+                }}
+                className="w-full bg-white text-black hover:bg-gray-100 transition-all duration-150 py-3 rounded-lg text-xs font-black uppercase tracking-wider flex items-center justify-center gap-3 cursor-pointer shadow-lg active:scale-98"
+              >
+                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                  <path
+                    fill="#EA4335"
+                    d="M12.24 10.285V14.4h6.887c-.275 1.565-1.88 4.6-6.887 4.6-4.33 0-7.859-3.58-7.859-8s3.53-8 7.859-8c2.46 0 4.105 1.025 5.047 1.926l3.243-3.12C18.425 2.05 15.635 1 12.24 1 5.922 1 .8 6.122.8 12.4s5.122 11.4 11.44 11.4c6.6 0 11-4.635 11-11.19 0-.75-.08-1.32-.18-1.885H12.24z"
+                  />
+                </svg>
+                <span>Authorize with Google</span>
+              </button>
+            </div>
+
+            <div className="p-3.5 rounded border border-theme-border bg-theme-input flex items-start gap-2.5">
+              <HeartHandshake className="w-4 h-4 text-theme-accent shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <p className="text-[10px] text-gray-300 font-bold uppercase font-mono tracking-wider">Multi-Studio Alignment</p>
+                <p className="text-[9px] text-gray-500 font-sans leading-relaxed">
+                  Log in with the same email across Google ecosystems to automatically sync positions, settings, and credentials safely. No local keys saved on servers.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="bg-theme-bg min-h-screen text-theme-text-primary font-sans antialiased relative overflow-x-hidden border-[12px] border-theme-input selection:bg-theme-accent/20 selection:text-theme-accent">
       {/* Subtle styling grids */}
@@ -232,6 +323,8 @@ export default function App() {
         onToggleBot={handleToggleBot}
         onTriggerScan={handleTriggerScan}
         isScanning={isScanning}
+        currentUser={user}
+        onSignOut={() => signOut(auth)}
       />
 
       {/* Dynamic Floating Toast Alerts */}
@@ -277,7 +370,7 @@ export default function App() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Settings Sidebar Panel */}
           <div className="lg:col-span-1 space-y-6">
-            <Settings config={config} onSaveConfig={handleSaveConfig} />
+            <Settings config={config} onSaveConfig={handleSaveConfig} currentUser={user} />
             <LogsConsole logs={logs} onClearLogs={handleClearLogs} />
           </div>
 

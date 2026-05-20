@@ -8,6 +8,8 @@ interface HeaderProps {
   onToggleBot: () => void;
   onTriggerScan: () => void;
   isScanning: boolean;
+  currentUser: any;
+  onSignOut: () => void;
 }
 
 export default function Header({
@@ -16,6 +18,8 @@ export default function Header({
   onToggleBot,
   onTriggerScan,
   isScanning,
+  currentUser,
+  onSignOut,
 }: HeaderProps) {
   return (
     <header className="border-b border-theme-border bg-theme-panel sticky top-0 z-50 px-6 py-4">
@@ -117,6 +121,34 @@ export default function Header({
             <Activity className={`w-3.5 h-3.5 ${isScanning ? "animate-spin text-theme-accent" : ""}`} />
             <span>{isScanning ? "Scanning..." : "Scan Markets Now"}</span>
           </button>
+
+          {currentUser && (
+            <div className="flex items-center gap-3 pl-3 border-l border-theme-border bg-theme-panel pt-1 lg:pt-0">
+              {currentUser.photoURL ? (
+                <img
+                  src={currentUser.photoURL}
+                  alt="Avatar"
+                  className="w-7 h-7 rounded-full border border-theme-accent"
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                <div className="w-7 h-7 rounded-full bg-theme-border flex items-center justify-center font-mono text-[9px] text-gray-400">
+                  {currentUser.email?.slice(0, 2).toUpperCase()}
+                </div>
+              )}
+              <div className="text-left leading-tight">
+                <div className="text-gray-100 font-mono text-[10px] font-bold max-w-[120px] truncate">
+                  {currentUser.displayName || currentUser.email?.split("@")[0]}
+                </div>
+                <button
+                  onClick={onSignOut}
+                  className="text-rose-400 hover:text-rose-300 transition-colors font-mono font-bold text-[9px] uppercase cursor-pointer block hover:underline"
+                >
+                  Sign Out
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </header>

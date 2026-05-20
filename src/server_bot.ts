@@ -2,6 +2,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import fs from "fs";
 import path from "path";
 import { BotConfig, StockSetup, ActivePosition, ClosedTrade, BotLog, BotState } from "./types.js";
+import { adminDb } from "./firebase_server.js";
 
 // Database File Persistence Path
 const DATA_FILE = path.resolve("./trading_state.json");
@@ -53,7 +54,32 @@ export function addLog(level: "INFO" | "SUCCESS" | "WARNING" | "ERROR", message:
 }
 
 // Ensure database file gets loaded
-export function loadStateFromDisk() {
+export async function loadStateFromDisk() {
+  try {
+    if (adminDb && typeof adminDb.collection === "function") {
+      const snap = await adminDb.collection("globalState").doc("trading").get();
+      if (snap.exists) {
+        const parsed = snap.data();
+        if (parsed) {
+          if (parsed.botConfig) botConfig = { ...botConfig, ...parsed.botConfig };
+          if (parsed.activePosition !== undefined) activePosition = parsed.activePosition;
+          if (parsed.closedTrades) closedTrades = parsed.closedTrades;
+          if (parsed.botLogs) botLogs = parsed.botLogs;
+          if (parsed.scannedSetups) scannedSetups = parsed.scannedSetups;
+          if (parsed.botState) botState = { ...botState, ...parsed.botState };
+          console.log("Trading State loaded successfully from FIRESTORE.");
+          
+          // Sync to cache file
+          const d = { botConfig, activePosition, closedTrades, botLogs, scannedSetups, botState };
+          fs.writeFileSync(DATA_FILE, JSON.stringify(d, null, 2), "utf-8");
+          return;
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn("Failed to load state from Firestore, falling back to disk backup:", err.message);
+  }
+
   try {
     if (fs.existsSync(DATA_FILE)) {
       const raw = fs.readFileSync(DATA_FILE, "utf-8");
@@ -64,7 +90,7 @@ export function loadStateFromDisk() {
       if (parsed.botLogs) botLogs = parsed.botLogs;
       if (parsed.scannedSetups) scannedSetups = parsed.scannedSetups;
       if (parsed.botState) botState = { ...botState, ...parsed.botState };
-      console.log("Trading State loaded successfully from disk.");
+      console.log("Trading State loaded successfully from disk backup.");
     } else {
       addLog("INFO", "No existing state file. Initializing a new bot state.");
       saveStateToDisk();
@@ -75,30 +101,117 @@ export function loadStateFromDisk() {
 }
 
 export function saveStateToDisk() {
+  const data = {
+    botConfig,
+    activePosition,
+    closedTrades,
+    scannedSetups,
+    botState,
+    botLogs,
+  };
+
   try {
-    const data = {
-      botConfig,
-      activePosition,
-      closedTrades,
-      botLogs,
-      scannedSetups,
-      botState,
-    };
     fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), "utf-8");
   } catch (err) {
     console.error("Failed to save state to disk:", err);
   }
+
+  // Asynchronously back up to Firestore
+  try {
+    if (adminDb && typeof adminDb.collection === "function") {
+      adminDb.collection("globalState").doc("trading").set({
+        ...data,
+        updatedAt: new Date().toISOString()
+      }, { merge: true }).catch(err => {
+        console.error("Async Firestore save failed:", err.message);
+      });
+    }
+  } catch (err: any) {
+    console.error("Failed to sync save to Firestore:", err.message);
+  }
 }
 
 // Alpaca API Callers
+interface UserCredentials {
+  userId: string;
+  ALPACA_API_KEY: string;
+  ALPACA_SECRET_KEY: string;
+  ALPACA_BASE_URL: string;
+}
+
+// Get all user credentials from Firestore credentials collection group
+export async function getAllUserCredentials(): Promise<UserCredentials[]> {
+  const credentialsList: UserCredentials[] = [];
+  try {
+    if (adminDb && typeof adminDb.collectionGroup === "function") {
+      const snap = await adminDb.collectionGroup("credentials").get();
+      snap.forEach((doc) => {
+        const data = doc.data();
+        const pathParts = doc.ref.path.split("/");
+        // Path is users/{userId}/private/credentials
+        const userId = pathParts[1];
+        if (userId && data.ALPACA_API_KEY && data.ALPACA_SECRET_KEY) {
+          credentialsList.push({
+            userId,
+            ALPACA_API_KEY: data.ALPACA_API_KEY,
+            ALPACA_SECRET_KEY: data.ALPACA_SECRET_KEY,
+            ALPACA_BASE_URL: data.ALPACA_BASE_URL || "https://paper-api.alpaca.markets",
+          });
+        }
+      });
+    }
+  } catch (error: any) {
+    console.error("Failed to query user credentials CollectionGroup:", error.message);
+  }
+  return credentialsList;
+}
+
+// User-specific Alpaca request helper
+async function alpacaUserFetch(
+  creds: { ALPACA_API_KEY: string; ALPACA_SECRET_KEY: string; ALPACA_BASE_URL: string },
+  endpoint: string,
+  options: RequestInit = {}
+) {
+  const apiKey = creds.ALPACA_API_KEY;
+  const apiSecret = creds.ALPACA_SECRET_KEY;
+  const baseUrl = creds.ALPACA_BASE_URL.replace(/\/$/, "");
+  const url = `${baseUrl}${endpoint}`;
+
+  const headers = {
+    "APCA-API-KEY-ID": apiKey,
+    "APCA-API-SECRET-KEY": apiSecret,
+    "Content-Type": "application/json",
+    ...(options.headers || {}),
+  } as HeadersInit;
+
+  const response = await fetch(url, { ...options, headers });
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Alpaca API Error (${response.status}): ${errText}`);
+  }
+  return response.json();
+}
+
 async function alpacaFetch(endpoint: string, options: RequestInit = {}) {
-  const apiKey = botConfig.ALPACA_API_KEY;
-  const apiSecret = botConfig.ALPACA_SECRET_KEY;
+  let apiKey = botConfig.ALPACA_API_KEY;
+  let apiSecret = botConfig.ALPACA_SECRET_KEY;
+  let baseUrl = botConfig.ALPACA_BASE_URL || "https://paper-api.alpaca.markets";
+
+  // If master credentials are not filled, use the first registered user's credentials
   if (!apiKey || !apiSecret) {
-    throw new Error("Missing Alpaca API credentials.");
+    const users = await getAllUserCredentials();
+    if (users.length > 0) {
+      apiKey = users[0].ALPACA_API_KEY;
+      apiSecret = users[0].ALPACA_SECRET_KEY;
+      baseUrl = users[0].ALPACA_BASE_URL;
+    }
   }
 
-  const baseUrl = botConfig.ALPACA_BASE_URL.replace(/\/$/, "");
+  if (!apiKey || !apiSecret) {
+    throw new Error("Missing Alpaca API credentials. Please set your credentials in connection settings first.");
+  }
+
+  baseUrl = baseUrl.replace(/\/$/, "");
   const url = `${baseUrl}${endpoint}`;
 
   const headers = {
@@ -636,50 +749,88 @@ export async function deployPortfolio(symbol: string): Promise<boolean> {
       throw new Error(`Deployment blocked: Pre-FOMC/CPI Blackout in effect: ${botState.fomcDetails}`);
     }
 
-    // 4. Fetch account equity to calculate exact position sizing (100% of equity)
-    const account = await alpacaFetch("/v2/account");
-    const equity = parseFloat(account.equity || account.cash);
-    const buyingPower = parseFloat(account.buying_power);
-
-    addLog("INFO", `Alpaca Portfolio Equity: $${equity.toFixed(2)} | Buying Power: $${buyingPower.toFixed(2)}`);
-
-    // Fetch live bar or quote to verify limit/market execution price
+    // 4. Fetch live bar or quote to verify limit/market execution price
     const bars = await fetchAlpacaBars(symbol, 5);
     const entryPrice = bars.length > 0 ? bars[bars.length - 1].c : proposal.price;
 
-    const qty = Math.floor(equity / entryPrice);
-    if (qty <= 0) {
-      throw new Error(`Calculated qty is 0. Balance too low to buy a single share at $${entryPrice}.`);
+    const users = await getAllUserCredentials();
+    let totalExecutedQty = 0;
+    let anySuccess = false;
+
+    if (users.length > 0) {
+      addLog("INFO", `Copy Trading Active: Routing buy setup on ${users.length} registered accounts...`);
+      for (const creds of users) {
+        try {
+          const account = await alpacaUserFetch(creds, "/v2/account");
+          const equity = parseFloat(account.equity || account.cash);
+          const qty = Math.floor(equity / entryPrice);
+          if (qty <= 0) {
+            addLog("WARNING", `[User ${creds.userId}] Account balance too low to buy 1 share at $${entryPrice.toFixed(2)}.`);
+            continue;
+          }
+
+          const orderPayload = {
+            symbol,
+            qty: qty.toString(),
+            side: "buy",
+            type: "limit",
+            limit_price: entryPrice.toString(),
+            time_in_force: "gtc",
+          };
+
+          const orderRes = await alpacaUserFetch(creds, "/v2/orders", {
+            method: "POST",
+            body: JSON.stringify(orderPayload),
+          });
+
+          addLog("SUCCESS", `[User ${creds.userId}] Copy Trade placed successfully! Bought ${qty} shares of ${symbol}. Order ID: ${orderRes.id}`);
+          totalExecutedQty += qty;
+          anySuccess = true;
+        } catch (uErr: any) {
+          addLog("ERROR", `[User ${creds.userId}] Copy Trade order rejected: ${uErr.message}`);
+        }
+      }
+
+      if (!anySuccess) {
+        throw new Error("Buy orders failed for all registered copy trading accounts.");
+      }
+    } else {
+      // Fallback single-user or master botConfig
+      addLog("INFO", "No multi-user copy trading keys registered in Firestore. Falling back to default settings...");
+      const account = await alpacaFetch("/v2/account");
+      const equity = parseFloat(account.equity || account.cash);
+      const qty = Math.floor(equity / entryPrice);
+      if (qty <= 0) {
+        throw new Error(`Calculated qty is 0. Balance too low to buy a single share at $${entryPrice.toFixed(2)}.`);
+      }
+
+      const orderPayload = {
+        symbol,
+        qty: qty.toString(),
+        side: "buy",
+        type: "limit",
+        limit_price: entryPrice.toString(),
+        time_in_force: "gtc",
+      };
+
+      const orderRes = await alpacaFetch("/v2/orders", {
+        method: "POST",
+        body: JSON.stringify(orderPayload),
+      });
+
+      addLog("SUCCESS", `Default connection buy order placed successfully! Qty: ${qty}, Order ID: ${orderRes.id}`);
+      totalExecutedQty = qty;
     }
-
-    addLog("INFO", `Placing limit buy order for ${qty} shares of ${symbol} at $${entryPrice.toFixed(2)}...`);
-
-    // Place Order on Alpaca
-    const orderPayload = {
-      symbol,
-      qty: qty.toString(),
-      side: "buy",
-      type: "limit",
-      limit_price: entryPrice.toString(),
-      time_in_force: "gtc",
-    };
-
-    const orderRes = await alpacaFetch("/v2/orders", {
-      method: "POST",
-      body: JSON.stringify(orderPayload),
-    });
-
-    addLog("SUCCESS", `Buy order successfully transmitted to Alpaca! Order ID: ${orderRes.id}`);
 
     // Set Active Position Details
     activePosition = {
       symbol,
       companyName: proposal.companyName,
-      qty,
+      qty: totalExecutedQty || 1,
       entryPrice,
       currentPrice: entryPrice,
-      entryValue: qty * entryPrice,
-      currentValue: qty * entryPrice,
+      entryValue: (totalExecutedQty || 1) * entryPrice,
+      currentValue: (totalExecutedQty || 1) * entryPrice,
       unrealizedPl: 0,
       unrealizedPlPct: 0,
       supportLevel: proposal.supportLevel,
@@ -894,24 +1045,57 @@ export async function executeExit(symbol: string, reason: string): Promise<boole
       throw new Error(`Unable to sell. No matching open state tracking found for ${symbol}.`);
     }
 
-    const qty = activePosition.qty;
+    const trackerQty = activePosition.qty;
+    const users = await getAllUserCredentials();
+    let anySuccess = false;
 
-    // Transmit Market Order on Alpaca
-    const sellPayload = {
-      symbol,
-      qty: qty.toString(),
-      side: "sell",
-      type: "market",
-      time_in_force: "gtc",
-    };
-
-    addLog("INFO", `Transmitting exit order to Alpaca: selling ${qty} shares of ${symbol}...`);
-    const sellRes = await alpacaFetch("/v2/orders", {
-      method: "POST",
-      body: JSON.stringify(sellPayload),
-    });
-
-    addLog("SUCCESS", `Exit Market order accepted by Alpaca! Order ID: ${sellRes.id}`);
+    if (users.length > 0) {
+      addLog("INFO", `Copy Trading Liquidations: Scanning ${users.length} registered accounts for open positions...`);
+      for (const creds of users) {
+        try {
+          const positions = await alpacaUserFetch(creds, "/v2/positions").catch(() => []);
+          const match = positions.find((p: any) => p.symbol === symbol);
+          if (match) {
+            const userQty = parseInt(match.qty || "0");
+            if (userQty > 0) {
+              const sellPayload = {
+                symbol,
+                qty: userQty.toString(),
+                side: "sell",
+                type: "market",
+                time_in_force: "gtc",
+              };
+              const sellRes = await alpacaUserFetch(creds, "/v2/orders", {
+                method: "POST",
+                body: JSON.stringify(sellPayload),
+              });
+              addLog("SUCCESS", `[User ${creds.userId}] Exit order transmitted successfully! Sold ${userQty} shares. Order ID: ${sellRes.id}`);
+              anySuccess = true;
+            }
+          } else {
+            addLog("WARNING", `[User ${creds.userId}] No open position found for ticker ${symbol} to liquidate.`);
+          }
+        } catch (uErr: any) {
+          addLog("ERROR", `[User ${creds.userId}] Failed to place copy liquidation for ${symbol}: ${uErr.message}`);
+        }
+      }
+    } else {
+      // Fallback single-user
+      addLog("INFO", "No multi-user credentials found in Firestore. Routing liquidation to default settings...");
+      const sellPayload = {
+        symbol,
+        qty: trackerQty.toString(),
+        side: "sell",
+        type: "market",
+        time_in_force: "gtc",
+      };
+      const sellRes = await alpacaFetch("/v2/orders", {
+        method: "POST",
+        body: JSON.stringify(sellPayload),
+      });
+      addLog("SUCCESS", `Default connection exit market order placed successfully! Qty: ${trackerQty}, Order ID: ${sellRes.id}`);
+      anySuccess = true;
+    }
 
     // Wait 2 seconds to query filled sell rates
     let filledPrice = activePosition.currentPrice;
@@ -920,17 +1104,17 @@ export async function executeExit(symbol: string, reason: string): Promise<boole
       if (bars && bars.length > 0) filledPrice = bars[bars.length - 1].c;
     } catch (_) {}
 
-    const pl = qty * filledPrice - activePosition.entryValue;
+    const pl = trackerQty * filledPrice - activePosition.entryValue;
     const plPct = (pl / activePosition.entryValue) * 100;
 
     // Add to Completed trading history
     closedTrades.unshift({
-      id: sellRes.id || Math.random().toString(36).substr(2, 9),
+      id: Math.random().toString(36).substr(2, 9),
       symbol,
       companyName: activePosition.companyName,
       entryPrice: activePosition.entryPrice,
       exitPrice: filledPrice,
-      qty,
+      qty: trackerQty,
       pl,
       plPct,
       enteredAt: activePosition.enteredAt,

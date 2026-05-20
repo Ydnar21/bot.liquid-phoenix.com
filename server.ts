@@ -26,7 +26,7 @@ async function startServer() {
   app.use(express.json());
 
   // Bootstrap data on start
-  loadStateFromDisk();
+  await loadStateFromDisk();
   restartCronEngine();
 
   addLog("INFO", "FastAPI-to-Node core port completed. Server state bootstrapped.");

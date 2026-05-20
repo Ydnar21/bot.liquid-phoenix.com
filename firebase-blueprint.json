@@ -1,0 +1,105 @@
+{
+  "entities": {
+    "user": {
+      "title": "User",
+      "description": "User public profile information",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase user unique ID"
+        },
+        "email": {
+          "type": "string",
+          "description": "User email address"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "User display name"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Profile registration time"
+        }
+      },
+      "required": ["uid", "email", "createdAt"]
+    },
+    "userCredentials": {
+      "title": "User Credentials",
+      "description": "User's private Alpaca settings and keys",
+      "type": "object",
+      "properties": {
+        "ALPACA_API_KEY": {
+          "type": "string",
+          "description": "Alpaca API Key ID"
+        },
+        "ALPACA_SECRET_KEY": {
+          "type": "string",
+          "description": "Alpaca Private Secret Key"
+        },
+        "ALPACA_BASE_URL": {
+          "type": "string",
+          "description": "Alpaca Endpoint routing base URL"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Time credentials were last updated"
+        }
+      },
+      "required": ["ALPACA_API_KEY", "ALPACA_SECRET_KEY", "ALPACA_BASE_URL", "updatedAt"]
+    },
+    "globalTradingState": {
+      "title": "Global Trading State",
+      "description": "Persisted shared portfolio trading status and setups",
+      "type": "object",
+      "properties": {
+        "activePosition": {
+          "type": "object",
+          "description": "Current open swing trade, if any"
+        },
+        "closedTrades": {
+          "type": "array",
+          "description": "Audited historic trade records"
+        },
+        "scannedSetups": {
+          "type": "array",
+          "description": "List of current identified stock setups"
+        },
+        "botConfig": {
+          "type": "object",
+          "description": "Shared scanning configurations"
+        },
+        "botState": {
+          "type": "object",
+          "description": "Consolidated state metrics"
+        },
+        "botLogs": {
+          "type": "array",
+          "description": "Unified execution log stream"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Database save timestamp"
+        }
+      },
+      "required": ["updatedAt"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "user",
+      "description": "User public profiles"
+    },
+    "users/{userId}/private/credentials": {
+      "schema": "userCredentials",
+      "description": "Isolated private credentials"
+    },
+    "globalState/trading": {
+      "schema": "globalTradingState",
+      "description": "Shared persistent state of the active copy trading system"
+    }
+  }
+}

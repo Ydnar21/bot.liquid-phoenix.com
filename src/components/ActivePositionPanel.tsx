@@ -17,12 +17,16 @@ export default function ActivePositionPanel({
 
   if (!position) {
     return (
-      <div className="bg-theme-panel border border-theme-border rounded p-8 text-center flex flex-col items-center justify-center h-full min-h-[250px]">
-        <Activity className="w-8 h-8 text-theme-accent mb-3 animate-pulse" />
-        <h3 className="text-sm font-bold text-white uppercase tracking-wider font-display">No Active Position Deployed</h3>
-        <p className="text-xs text-gray-450 mt-1 max-w-sm font-sans">
-          The autonomous market agent is in hunt mode. Once a high-probability pullback setup matches all technical and Gemini sentiment filters, it will reflect here.
-        </p>
+      <div className="bg-theme-panel border border-theme-border rounded p-6 sm:p-10 text-center flex flex-col items-center justify-center h-full min-h-[220px] gap-3">
+        <Activity className="w-8 h-8 text-theme-accent animate-pulse shrink-0" />
+        <div className="space-y-2 max-w-md mx-auto">
+          <h3 className="text-xs sm:text-sm font-bold text-white uppercase tracking-wider font-display leading-snug">
+            No Active Position Deployed
+          </h3>
+          <p className="text-xs text-gray-400 font-sans leading-relaxed">
+            The autonomous market agent is in hunt mode. Once a high-probability pullback setup matches all technical and Gemini sentiment filters, it will reflect here.
+          </p>
+        </div>
       </div>
     );
   }

@@ -87,4 +87,5 @@ export interface BotState {
   spyPrice: number;
   fomcBlackout: boolean;
   fomcDetails?: string;
+  isMarketOpen?: boolean;
 }

@@ -32,6 +32,7 @@ let botState: BotState = {
   spySma200: 0,
   spyPrice: 0,
   fomcBlackout: false,
+  isMarketOpen: true,
 };
 
 // Universe of Top Liquid Growth/Value Leaders in S&P 500 + Nasdaq 100
@@ -989,6 +990,33 @@ function getCompanyName(ticker: string): string {
 
 // 24/7 Background Cron Engine Setup
 let backgroundIntervalId: NodeJS.Timeout | null = null;
+let wasMarketOpenLastKnown = true;
+
+export function isMarketOrPremarketOpen(date: Date = new Date()): boolean {
+  try {
+    const nyString = date.toLocaleString("en-US", { timeZone: "America/New_York" });
+    const nyDate = new Date(nyString);
+    
+    const day = nyDate.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+    if (day === 0 || day === 6) {
+      return false;
+    }
+    
+    const hours = nyDate.getHours();
+    const minutes = nyDate.getMinutes();
+    const totalMinutes = hours * 60 + minutes;
+    
+    const startPremarketMinutes = 4 * 60; // 4:00 AM ET
+    const endCoreMinutes = 16 * 60; // 4:00 PM ET (16:00)
+    
+    return totalMinutes >= startPremarketMinutes && totalMinutes < endCoreMinutes;
+  } catch (error) {
+    const day = date.getDay();
+    if (day === 0 || day === 6) return false;
+    const hours = date.getUTCHours();
+    return hours >= 9 && hours < 21;
+  }
+}
 
 export function restartCronEngine() {
   if (backgroundIntervalId) {
@@ -1017,7 +1045,29 @@ export function restartCronEngine() {
 }
 
 async function runContinuousBotCycle() {
-  addLog("INFO", "Executing autonomous 24/7 background state evaluation cycle...");
+  const currentlyOpen = isMarketOrPremarketOpen();
+  botState.isMarketOpen = currentlyOpen;
+
+  if (!currentlyOpen) {
+    if (wasMarketOpenLastKnown) {
+      addLog("WARNING", "US Market is currently CLOSED (Standard of premarket & core). Automated scanning and position evaluation suspended to conserve resource footprint.");
+      wasMarketOpenLastKnown = false;
+    }
+    
+    botState.lastScanTime = new Date().toISOString();
+    if (botConfig.isBotRunning) {
+      botState.nextScanTime = new Date(Date.now() + botConfig.scanIntervalMinutes * 60 * 1000).toISOString();
+    }
+    saveStateToDisk();
+    return;
+  }
+
+  if (!wasMarketOpenLastKnown) {
+    addLog("SUCCESS", "US Market has OPENED (Premarket or Core session). Restoring active autonomous AI scanner and tracking loops.");
+    wasMarketOpenLastKnown = true;
+  }
+
+  addLog("INFO", "Executing autonomous background state evaluation cycle...");
 
   try {
     // 1. Evaluate positions if open

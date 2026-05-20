@@ -67,6 +67,16 @@ export default function Header({
             </div>
           )}
 
+          {/* Market Session Status Badge */}
+          <div className={`flex items-center gap-2 px-3 py-1.5 rounded border text-[10px] font-mono font-bold ${
+            botState.isMarketOpen 
+              ? "bg-indigo-500/15 border-indigo-500/35 text-indigo-400" 
+              : "bg-amber-500/15 border-amber-500/35 text-amber-400"
+          }`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${botState.isMarketOpen ? "bg-indigo-400 animate-pulse" : "bg-amber-500"}`} />
+            <span>{botState.isMarketOpen ? "MARKET HOURS" : "MARKET CLOSED"}</span>
+          </div>
+
           {/* Active / Offline Status Badge */}
           <div className={`flex items-center gap-2 px-3 py-1.5 rounded border text-[10px] font-mono font-bold ${
             botConfig.isBotRunning 

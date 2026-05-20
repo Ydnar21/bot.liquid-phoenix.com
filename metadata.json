@@ -1,0 +1,6 @@
+{
+  "name": "AI Swing Trading Bot",
+  "description": "An autonomous AI-powered swing trading bot that scans S&P 500 & Nasdaq 100 for high-quality setups, analyzes news sentiment with Gemini AI, and executes trades via Alpaca REST API.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

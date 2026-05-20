@@ -1,0 +1,114 @@
+import React from "react";
+import { Play, Pause, Activity, TrendingUp, AlertTriangle, Cpu } from "lucide-react";
+import { BotState, BotConfig } from "../types";
+
+interface HeaderProps {
+  botState: BotState;
+  botConfig: BotConfig;
+  onToggleBot: () => void;
+  onTriggerScan: () => void;
+  isScanning: boolean;
+}
+
+export default function Header({
+  botState,
+  botConfig,
+  onToggleBot,
+  onTriggerScan,
+  isScanning,
+}: HeaderProps) {
+  return (
+    <header className="border-b border-theme-border bg-theme-panel sticky top-0 z-50 px-6 py-4">
+      <div className="max-w-7xl mx-auto flex flex-col lg:flex-row items-center justify-between gap-4">
+        {/* Brand identity - High Density Style */}
+        <div className="flex items-center gap-4">
+          <div className="w-10 h-10 bg-theme-accent rounded flex items-center justify-center font-bold text-black text-base shrink-0">
+            S-A
+          </div>
+          <div>
+            <h1 className="text-base font-bold tracking-tight uppercase text-white flex items-center gap-2">
+              Swing Trading AI <span className="text-theme-accent text-[9px] border border-theme-accent px-1.5 py-0.5 rounded font-mono">v1.0.4</span>
+            </h1>
+            <p className="text-[10px] text-gray-500 font-mono tracking-widest uppercase">Autonomous Market Agent</p>
+          </div>
+        </div>
+
+        {/* State details */}
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Market Regime */}
+          <div className="flex items-center gap-2 bg-theme-input border border-theme-border px-3 py-1.5 rounded text-xs font-mono">
+            <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="text-gray-500 uppercase font-black text-[10px]">Regime:</span>
+            <span className={`font-mono font-bold ${
+              botState.marketRegime === "NORMAL" 
+                ? "text-emerald-400" 
+                : botState.marketRegime === "STRICT_VOLUME" 
+                ? "text-amber-400" 
+                : "text-rose-400"
+            }`}>
+              {botState.marketRegime}
+            </span>
+            {botState.spyPrice > 0 && (
+              <span className="text-gray-400">
+                (SPY ${botState.spyPrice.toFixed(1)})
+              </span>
+            )}
+          </div>
+
+          {/* FOMC/CPI Status */}
+          {botState.fomcBlackout ? (
+            <div className="flex items-center gap-1.5 bg-rose-500/10 border border-rose-500/20 px-3 py-1.5 rounded text-[10px] text-rose-400 font-bold font-mono uppercase">
+              <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+              <span>BLACKOUT ACTIVATED</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 bg-theme-input border border-theme-border px-3 py-1.5 rounded text-[10px] text-emerald-400 font-bold font-mono">
+              <span>● NO BLACKOUT DETECTED</span>
+            </div>
+          )}
+
+          {/* Active / Offline Status Badge */}
+          <div className={`flex items-center gap-2 px-3 py-1.5 rounded border text-[10px] font-mono font-bold ${
+            botConfig.isBotRunning 
+              ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" 
+              : "bg-theme-input border-theme-border text-gray-500"
+          }`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${botConfig.isBotRunning ? "bg-emerald-400 animate-pulse" : "bg-white/20"}`} />
+            <span>{botConfig.isBotRunning ? "● ALPACA CONNECTED" : "ALPACA HOLD"}</span>
+          </div>
+
+          {/* Actions */}
+          <button
+            onClick={onToggleBot}
+            className={`flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider px-4 py-2 rounded shadow-sm transition-all duration-150 cursor-pointer ${
+              botConfig.isBotRunning
+                ? "bg-rose-600 text-white hover:bg-rose-700"
+                : "bg-theme-accent text-black hover:bg-blue-600"
+            }`}
+          >
+            {botConfig.isBotRunning ? (
+              <>
+                <Pause className="w-3.5 h-3.5 fill-current" />
+                <span>Pause Bot</span>
+              </>
+            ) : (
+              <>
+                <Play className="w-3.5 h-3.5 fill-current" />
+                <span>Start trading</span>
+              </>
+            )}
+          </button>
+
+          <button
+            onClick={onTriggerScan}
+            disabled={isScanning}
+            className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider px-4 py-2 rounded bg-theme-input hover:bg-theme-border/30 border border-theme-border text-gray-300 disabled:opacity-50 transition-all duration-150 cursor-pointer disabled:cursor-not-allowed"
+          >
+            <Activity className={`w-3.5 h-3.5 ${isScanning ? "animate-spin text-theme-accent" : ""}`} />
+            <span>{isScanning ? "Scanning..." : "Scan Markets Now"}</span>
+          </button>
+        </div>
+      </div>
+    </header>
+  );
+}

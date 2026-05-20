@@ -29,7 +29,7 @@ export default function ScreenerPanel({
             <Flame className="w-5 h-5 text-theme-accent" />
             <h2 className="text-md font-bold text-white uppercase tracking-tight font-display">Setup Scanner proposals</h2>
           </div>
-          <p className="text-xs text-gray-450 font-mono">PULLBACK CONDITIONS SCRAPING S&P 500 AND NASDAQ 100 LISTS</p>
+          <p className="text-xs text-gray-400 font-mono">PULLBACK CONDITIONS SCRAPING S&P 500 AND NASDAQ 100 LISTS</p>
         </div>
         <div className="text-[10px] font-mono bg-theme-input border border-theme-border px-3 py-1.5 rounded text-gray-400 uppercase font-bold">
           Candidates Filtered: <span className="text-theme-accent font-black">{setups.length}</span>
@@ -177,7 +177,7 @@ export default function ScreenerPanel({
                           <span className="font-black flex items-center gap-1 text-[10px] uppercase">
                             <AlertCircle className="w-3.5 h-3.5" /> Sentry Hard Blocks Triggered:
                           </span>
-                          <ul className="list-disc pl-5 text-[11px] text-rose-350">
+                          <ul className="list-disc pl-5 text-[11px] text-rose-400">
                             {setup.blockersFound.map((b, idx) => (
                               <li key={idx}>{b}</li>
                             ))}
@@ -193,7 +193,7 @@ export default function ScreenerPanel({
                     {/* Deployment button inside row */}
                     {!isBlocked && (
                       <div className="flex items-center justify-between border-t border-theme-border pt-4">
-                        <div className="text-xs font-mono text-rose-450 uppercase">
+                        <div className="text-xs font-mono text-rose-400 uppercase">
                           Predefined Support Floor: ${setup.supportLevel.toFixed(2)}
                         </div>
                         <button

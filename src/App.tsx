@@ -247,7 +247,7 @@ export default function App() {
       <div className="bg-theme-bg min-h-screen flex items-center justify-center border-[12px] border-theme-input">
         <div className="flex flex-col items-center gap-4 text-center">
           <RefreshCw className="w-8 h-8 text-theme-accent animate-spin" />
-          <div className="font-mono text-xs text-gray-550 uppercase tracking-widest">Verifying connection to security clusters...</div>
+          <div className="font-mono text-xs text-gray-400 uppercase tracking-widest">Verifying connection to security clusters...</div>
         </div>
       </div>
     );
@@ -371,7 +371,6 @@ export default function App() {
           {/* Settings Sidebar Panel */}
           <div className="lg:col-span-1 space-y-6">
             <Settings config={config} onSaveConfig={handleSaveConfig} currentUser={user} />
-            <LogsConsole logs={logs} onClearLogs={handleClearLogs} />
           </div>
 
           {/* Active Positions & Screener proposals workspace */}
@@ -398,6 +397,11 @@ export default function App() {
         {/* Historic trades ledger table element */}
         <div className="w-full">
           <PerformanceHistory history={history} />
+        </div>
+
+        {/* Tactical Bot Flight Monitor Logs console */}
+        <div className="w-full">
+          <LogsConsole logs={logs} onClearLogs={handleClearLogs} />
         </div>
       </main>
 

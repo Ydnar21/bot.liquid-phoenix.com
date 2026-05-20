@@ -43,7 +43,7 @@ export default function PerformanceHistory({ history }: PerformanceHistoryProps)
             <History className="w-5 h-5 text-theme-accent" />
             <h2 className="text-md font-bold text-white uppercase tracking-tight font-display">Closed Trades Journal</h2>
           </div>
-          <p className="text-xs text-gray-450 font-mono">AUDITED OUTCOMES OF COMPLETED PORTFOLIO RUNS</p>
+          <p className="text-xs text-gray-400 font-mono">AUDITED OUTCOMES OF COMPLETED PORTFOLIO RUNS</p>
         </div>
 
         {/* Rapid summary statistics cards */}
@@ -64,7 +64,7 @@ export default function PerformanceHistory({ history }: PerformanceHistoryProps)
       </div>
 
       {history.length === 0 ? (
-        <div className="text-center py-10 flex flex-col items-center justify-center text-gray-550 font-mono uppercase tracking-tight">
+        <div className="text-center py-10 flex flex-col items-center justify-center text-gray-400 font-mono uppercase tracking-tight">
           <Calendar className="w-7 h-7 text-gray-700 mb-2.5 animate-pulse" />
           <h3 className="text-xs font-bold text-gray-400">Journal empty</h3>
           <p className="text-[10px] text-gray-500 mt-1 max-w-sm font-sans normal-case">
@@ -81,12 +81,12 @@ export default function PerformanceHistory({ history }: PerformanceHistoryProps)
               const sellDate = new Date(trade.exitedAt).toLocaleDateString();
 
               return (
-                <div key={trade.id} className="bg-theme-input/40 border border-theme-border rounded-lg p-4 space-y-3 hover:border-theme-border/80 transition-colors">
+                <div key={trade.id} className="bg-theme-input/40 border border-theme-border rounded-lg p-4 space-y-4 hover:border-theme-border/80 transition-colors">
                   <div className="flex justify-between items-start gap-2">
                     <div>
                       <div className="font-mono text-sm font-bold text-white flex items-center flex-wrap gap-1">
                         <span>{trade.symbol}</span>
-                        <span className="text-[10px] text-gray-500 font-normal font-sans">
+                        <span className="text-[10px] text-gray-400 font-normal font-sans">
                           &bull; {trade.qty} SHARES
                         </span>
                       </div>
@@ -106,22 +106,22 @@ export default function PerformanceHistory({ history }: PerformanceHistoryProps)
                     </div>
                   </div>
 
-                  <div className="flex flex-col sm:flex-row gap-2 justify-between border-t border-theme-border/40 pt-2.5">
+                  <div className="flex flex-col gap-3 border-t border-theme-border/40 pt-3 flex-wrap">
                     <div>
                       <span className="text-[8px] text-gray-500 block font-mono uppercase tracking-wider">Liquidation Trigger</span>
-                      <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded font-bold uppercase tracking-tight block w-fit mt-0.5 ${getBadgeStyle(trade.exitReason)}`}>
+                      <span className={`text-[9.5px] font-mono px-2 py-0.5 rounded font-bold uppercase tracking-tight block w-fit mt-1 ${getBadgeStyle(trade.exitReason)}`}>
                         {formatReason(trade.exitReason)}
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[10.5px] font-mono">
+                    <div className="flex flex-wrap gap-x-6 gap-y-2 text-[10.5px] font-mono">
                       <div>
                         <span className="text-[8px] text-gray-500 block uppercase tracking-wider">Duration</span>
-                        <span className="text-gray-300">{buyDate} → {sellDate}</span>
+                        <span className="text-gray-300 whitespace-nowrap">{buyDate} → {sellDate}</span>
                       </div>
-                      <div className="text-right sm:text-left">
+                      <div>
                         <span className="text-[8px] text-gray-500 block uppercase tracking-wider">Entry &rarr; Exit</span>
-                        <span className="text-gray-300">${trade.entryPrice.toFixed(2)} → ${trade.exitPrice.toFixed(2)}</span>
+                        <span className="text-gray-300 whitespace-nowrap">${trade.entryPrice.toFixed(2)} → ${trade.exitPrice.toFixed(2)}</span>
                       </div>
                     </div>
                   </div>
@@ -134,12 +134,12 @@ export default function PerformanceHistory({ history }: PerformanceHistoryProps)
           <div className="hidden md:block overflow-x-auto custom-scrollbar">
             <table className="w-full text-left border-collapse text-xs min-w-[750px]">
               <thead>
-                <tr className="border-b border-theme-border text-gray-500 font-mono font-bold text-[9px] uppercase tracking-wider">
-                  <th className="py-3 px-2">Stock Asset Ticker</th>
-                  <th className="py-3 px-2 text-center">Liquidation Trigger</th>
-                  <th className="py-3 px-2 text-center">Duration (Buy &rarr; Sell)</th>
-                  <th className="py-3 px-2 text-center">Cost Basis &rarr; Fill</th>
-                  <th className="py-3 px-2 text-right">Net Return</th>
+                <tr className="border-b border-theme-border text-gray-400 font-mono font-bold text-[9px] uppercase tracking-wider">
+                  <th className="py-3 px-3 w-[22%] min-w-[150px]">Stock Asset Ticker</th>
+                  <th className="py-3 px-3 w-[24%] min-w-[180px] text-center">Liquidation Trigger</th>
+                  <th className="py-3 px-3 w-[22%] min-w-[160px] text-center">Duration (Buy &rarr; Sell)</th>
+                  <th className="py-3 px-3 w-[18%] min-w-[150px] text-center">Cost Basis &rarr; Fill</th>
+                  <th className="py-3 px-3 w-[14%] min-w-[110px] text-right">Net Return</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-theme-border">
@@ -151,7 +151,7 @@ export default function PerformanceHistory({ history }: PerformanceHistoryProps)
                   return (
                     <tr key={trade.id} className="hover:bg-theme-input/20 transition-colors">
                       {/* Ticker name */}
-                      <td className="py-3 px-2 font-mono font-bold text-white text-sm">
+                      <td className="py-3 px-3 font-mono font-bold text-white text-sm">
                         {trade.symbol}
                         <span className="text-[10px] text-gray-500 block font-sans font-normal">
                           {trade.companyName}
@@ -159,36 +159,36 @@ export default function PerformanceHistory({ history }: PerformanceHistoryProps)
                       </td>
 
                       {/* Exit triggers reasons color highlights */}
-                      <td className="py-3 px-2 text-center">
+                      <td className="py-3 px-3 text-center">
                         <span className={`text-[9.5px] font-mono px-2 py-0.5 rounded font-bold uppercase tracking-tight inline-block ${getBadgeStyle(trade.exitReason)}`}>
                           {formatReason(trade.exitReason)}
                         </span>
                       </td>
 
                       {/* Timeline dates info */}
-                      <td className="py-3 px-2 text-center font-mono text-gray-400 text-[11px] whitespace-nowrap">
+                      <td className="py-3 px-3 text-center font-mono text-gray-400 text-[11px] whitespace-nowrap">
                         {buyDate} &rarr; {sellDate}
                       </td>
 
                       {/* Entry cost / fill metrics */}
-                      <td className="py-3 px-2 text-center font-mono text-gray-300">
+                      <td className="py-3 px-3 text-center font-mono text-gray-300">
                         <div className="whitespace-nowrap">
                           ${trade.entryPrice.toFixed(2)} &rarr; ${trade.exitPrice.toFixed(2)}
                         </div>
-                        <span className="text-[9.5px] text-gray-550 block uppercase font-bold mt-0.5">
+                        <span className="text-[9.5px] text-gray-400 block uppercase font-bold mt-0.5">
                           Qty: {trade.qty} ({trade.symbol.toUpperCase()})
                         </span>
                       </td>
 
                       {/* P&L dollars and percentage audits */}
-                      <td className="py-3 px-2 text-right shrink-0">
+                      <td className="py-3 px-3 text-right">
                         <div className={`font-mono font-black text-sm flex items-center justify-end gap-1 ${
-                          isPlProfit ? "text-emerald-400" : "text-rose-450"
+                          isPlProfit ? "text-emerald-400" : "text-rose-400"
                         }`}>
-                          {isPlProfit ? <ArrowUpRight className="w-3.5 h-3.5 text-emerald-400" /> : <ArrowDownRight className="w-3.5 h-3.5 text-rose-450" />}
+                          {isPlProfit ? <ArrowUpRight className="w-3.5 h-3.5 text-emerald-400" /> : <ArrowDownRight className="w-3.5 h-3.5 text-rose-400" />}
                           <span>{isPlProfit ? "+" : ""}{trade.plPct.toFixed(2)}%</span>
                         </div>
-                        <span className={`font-mono text-[10px] block mt-0.5 ${isPlProfit ? "text-emerald-500/80" : "text-rose-450/80"}`}>
+                        <span className={`font-mono text-[10px] block mt-0.5 ${isPlProfit ? "text-emerald-500/80" : "text-rose-400/80"}`}>
                           {isPlProfit ? "+" : ""}${trade.pl.toFixed(2)}
                         </span>
                       </td>

@@ -165,7 +165,7 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
         </form>
       </div>
 
-      <div className="mt-6 pt-4 border-t border-theme-border text-[11px] text-gray-450 space-y-2">
+      <div className="mt-6 pt-4 border-t border-theme-border text-[11px] text-gray-400 space-y-2">
         <h4 className="font-semibold text-gray-400 flex items-center gap-1 uppercase font-mono text-[10px] tracking-wider">
           <HelpCircle className="w-3.5 h-3.5 text-theme-accent" /> Strategy Config
         </h4>

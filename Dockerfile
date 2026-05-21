@@ -22,7 +22,6 @@ WORKDIR /app
 
 # Configure application environment
 ENV NODE_ENV=production
-ENV PORT=3000
 
 # Copy only build artifacts, dependency configuration, and initial state files
 COPY --from=builder /app/package*.json ./
@@ -33,7 +32,7 @@ COPY --from=builder /app/trading_state.json* ./
 RUN npm ci --only=production
 
 # Cloud Run binds to dynamic port - default documentation port
-EXPOSE 3000
+EXPOSE 8080
 
 # Start command
 CMD ["npm", "start"]

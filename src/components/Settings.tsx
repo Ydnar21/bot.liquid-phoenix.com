@@ -157,7 +157,7 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
           <button
             type="submit"
             disabled={loading}
-            className="w-full mt-6 bg-theme-accent hover:bg-blue-600 disabled:opacity-50 text-black px-4 py-2.5 rounded text-xs font-black uppercase tracking-wider transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-lg disabled:cursor-wait"
+            className="w-full mt-6 bg-theme-accent hover:bg-orange-600 disabled:opacity-50 text-black px-4 py-2.5 rounded text-xs font-black uppercase tracking-wider transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-lg disabled:cursor-wait"
           >
             <Save className="w-3.5 h-3.5" />
             <span>{loading ? "Syncing..." : isSaved ? "Saved Successfully!" : "Save and Sync Keys"}</span>

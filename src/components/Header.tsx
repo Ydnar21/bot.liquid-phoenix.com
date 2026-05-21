@@ -31,7 +31,7 @@ export default function Header({
           </div>
           <div>
             <h1 className="text-base font-bold tracking-tight uppercase text-white flex items-center gap-2">
-              Swing Trading AI <span className="text-theme-accent text-[9px] border border-theme-accent px-1.5 py-0.5 rounded font-mono">v1.0.4</span>
+              Liquid Phoenix Swing Trading Portal <span className="text-theme-accent text-[9px] border border-theme-accent px-1.5 py-0.5 rounded font-mono">v1.0.4</span>
             </h1>
             <p className="text-[10px] text-gray-500 font-mono tracking-widest uppercase">Autonomous Market Agent</p>
           </div>
@@ -97,7 +97,7 @@ export default function Header({
             className={`flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider px-4 py-2 rounded shadow-sm transition-all duration-150 cursor-pointer ${
               botConfig.isBotRunning
                 ? "bg-rose-600 text-white hover:bg-rose-700"
-                : "bg-theme-accent text-black hover:bg-blue-600"
+                : "bg-theme-accent text-black hover:bg-orange-600"
             }`}
           >
             {botConfig.isBotRunning ? (

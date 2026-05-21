@@ -271,7 +271,7 @@ export default function App() {
                 <Cpu className="w-8 h-8" />
               </div>
               <div className="space-y-1">
-                <h1 className="text-xl font-bold tracking-tight uppercase text-white font-display">Swing Trading AI Portal</h1>
+                <h1 className="text-xl font-bold tracking-tight uppercase text-white font-display">Liquid Phoenix Swing Trading Portal</h1>
                 <p className="text-[10px] text-theme-accent font-mono tracking-widest uppercase">Autonomous Copy Portfolio Sentry</p>
               </div>
             </div>

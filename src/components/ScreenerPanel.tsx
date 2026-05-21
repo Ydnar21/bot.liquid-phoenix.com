@@ -202,7 +202,7 @@ export default function ScreenerPanel({
                           className={`flex items-center gap-1.5 px-5 py-2.5 rounded text-xs font-black uppercase font-mono transition-colors cursor-pointer ${
                             hasActivePosition
                               ? "bg-theme-input text-gray-500 border border-theme-border cursor-not-allowed"
-                              : "bg-theme-accent text-black hover:bg-blue-600 shadow"
+                              : "bg-theme-accent text-black hover:bg-orange-600 shadow"
                           }`}
                         >
                           <Coins className="w-3.5 h-3.5" />

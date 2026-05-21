@@ -26,7 +26,6 @@ ENV NODE_ENV=production
 # Copy only build artifacts, dependency configuration, and initial state files
 COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/trading_state.json* ./
 
 # Install strictly production dependencies to optimize start-up duration and size
 RUN npm ci --only=production

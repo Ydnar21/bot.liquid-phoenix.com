@@ -17,7 +17,7 @@ export default function ActivePositionPanel({
 
   if (!position) {
     return (
-      <div className="bg-theme-panel border border-theme-border rounded p-6 sm:p-10 text-center flex flex-col items-center justify-center h-full min-h-[220px] gap-3">
+      <div className="bg-theme-panel border border-theme-border rounded p-6 sm:p-10 text-center flex flex-col items-center justify-center h-auto min-h-[220px] gap-3">
         <Activity className="w-8 h-8 text-theme-accent animate-pulse shrink-0" />
         <div className="space-y-2 max-w-md mx-auto">
           <h3 className="text-xs sm:text-sm font-bold text-white uppercase tracking-wider font-display leading-snug">
@@ -42,7 +42,7 @@ export default function ActivePositionPanel({
   );
 
   return (
-    <div className="bg-theme-active-panel border border-theme-accent rounded p-5 sm:p-6 shadow-xl h-full flex flex-col justify-between relative overflow-hidden">
+    <div className="bg-theme-active-panel border border-theme-accent rounded p-5 sm:p-6 shadow-xl h-auto flex flex-col justify-between relative overflow-hidden">
       {/* Decorative vertical color accent indicator */}
       <div className="absolute top-0 left-0 w-1 h-full bg-theme-accent" />
 

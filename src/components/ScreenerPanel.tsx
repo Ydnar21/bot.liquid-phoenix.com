@@ -22,7 +22,7 @@ export default function ScreenerPanel({
   };
 
   return (
-    <div className="bg-theme-panel border border-theme-border rounded p-6 shadow-xl h-full">
+    <div className="bg-theme-panel border border-theme-border rounded p-6 shadow-xl h-auto">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-theme-border pb-4 mb-6 gap-3">
         <div>
           <div className="flex items-center gap-2">

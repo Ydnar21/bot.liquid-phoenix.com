@@ -1062,6 +1062,30 @@ export async function scanForSetups() {
     botState.nextScanTime = new Date(Date.now() + botConfig.scanIntervalMinutes * 60 * 1000).toISOString();
     saveStateToDisk();
 
+    // 3. Autonomous Trade Trigger Action:
+    // If bot task scheduler is active and we don't have an open activePosition, automatically analyze 
+    // and deploy the setup with the absolute largest pullback potential upside based on supply/demand zones.
+    if (botConfig.isBotRunning && !activePosition && scannedSetups.length > 0) {
+      const eligibleSetups = scannedSetups.filter(s => s.blockersFound.length === 0);
+      if (eligibleSetups.length > 0) {
+        const sortedByUpside = [...eligibleSetups].sort((a, b) => {
+          const upsideA = a.demandZone && a.demandZone > 0 ? ((a.supplyZone - a.demandZone) / a.demandZone) : 0;
+          const upsideB = b.demandZone && b.demandZone > 0 ? ((b.supplyZone - b.demandZone) / b.demandZone) : 0;
+          return upsideB - upsideA;
+        });
+
+        const bestSetup = sortedByUpside[0];
+        const upsidePct = bestSetup.demandZone && bestSetup.demandZone > 0 ? ((bestSetup.supplyZone - bestSetup.demandZone) / bestSetup.demandZone) * 100 : 0;
+
+        addLog("SUCCESS", `[AUTONOMOUS TRADER] Identified ${bestSetup.symbol} with highest S&D zone upside potential of +${upsidePct.toFixed(2)}% (Demand: $${bestSetup.demandZone}, Supply: $${bestSetup.supplyZone}).`);
+        addLog("INFO", `[AUTONOMOUS TRADER] Automatically placing limit buy order exactly at the pullback demand zone price: $${bestSetup.demandZone.toFixed(2)}.`);
+        
+        await deployPortfolio(bestSetup.symbol);
+      } else {
+        addLog("INFO", "[AUTONOMOUS TRADER] Scanner completed but all setup candidates are currently blocked by news risk indicators.");
+      }
+    }
+
   } catch (err: any) {
     addLog("ERROR", `Continuous scanning routine crashed: ${err.message}`);
   }
@@ -1251,7 +1275,15 @@ export async function deployPortfolio(symbol: string): Promise<boolean> {
 
     // 4. Fetch live bar or quote to verify limit/market execution price
     const bars = await fetchAlpacaBars(symbol, 5);
-    const entryPrice = bars.length > 0 ? bars[bars.length - 1].c : proposal.price;
+    const livePrice = bars.length > 0 ? bars[bars.length - 1].c : proposal.price;
+    // Enter exactly at the demand/support zone price with a limit buy order
+    const entryPrice = proposal.demandZone && proposal.demandZone > 0 ? proposal.demandZone : livePrice;
+
+    // Set stop loss at the next demand zone below (using 5% below entry support as a lower safety floor)
+    const supportLevel = Math.round((entryPrice * 0.95 || livePrice * 0.95) * 100) / 100;
+
+    // Set target profit to exit at the resistance zone (supplyZone)
+    const targetPrice = proposal.supplyZone && proposal.supplyZone > 0 ? proposal.supplyZone : (proposal.targetPrice || Math.round(entryPrice * 1.1 * 100) / 100);
 
     const users = await getAllUserCredentials();
     let totalExecutedQty = 0;
@@ -1333,8 +1365,8 @@ export async function deployPortfolio(symbol: string): Promise<boolean> {
       currentValue: (totalExecutedQty || 1) * entryPrice,
       unrealizedPl: 0,
       unrealizedPlPct: 0,
-      supportLevel: proposal.supportLevel,
-      targetPrice: proposal.targetPrice,
+      supportLevel,
+      targetPrice,
       catalystDate: proposal.catalystDate,
       catalystEvent: proposal.catalystEvent,
       earningsDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0], // Estimated default
@@ -1468,14 +1500,11 @@ export async function evaluateActivePosition() {
       }
     }
 
-    // RULE: Support break check - Re-evaluated via news audit
+    // RULE: Stop Loss Breached Support Break Check
     if (currentPrice < activePosition.supportLevel) {
-      if (activePosition.status !== "REVIEW") {
-        addLog("WARNING", `Alert: Close price below support level $${activePosition.supportLevel}. Requesting immediate Gemini risk re-evaluation.`);
-        activePosition.status = "REVIEW";
-        activePosition.reviewReason = "Closed below support level.";
-        await runGeminiRiskReevaluation();
-      }
+      addLog("ERROR", `STOP LOSS REACHED: ${symbol} price $${currentPrice.toFixed(2)} fell below the stop loss of $${activePosition.supportLevel.toFixed(2)} (the next demand zone safety floor). Exiting trade immediately to preserve capital.`);
+      await executeExit(symbol, "STOP_LOSS_REACHED");
+      return;
     } else {
       // Clear review status if it bounces back
       if (activePosition.status === "REVIEW") {

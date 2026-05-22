@@ -54,7 +54,7 @@ export default function CalendarPanel({ events = [] }: CalendarPanelProps) {
   };
 
   return (
-    <div className="bg-theme-panel border border-theme-border rounded p-6 shadow-xl h-full flex flex-col">
+    <div className="bg-theme-panel border border-theme-border rounded p-6 shadow-xl h-auto flex flex-col">
       <div className="flex items-center justify-between border-b border-theme-border pb-4 mb-4">
         <div className="flex items-center gap-2">
           <Calendar className="w-5 h-5 text-theme-accent" />
@@ -78,7 +78,7 @@ export default function CalendarPanel({ events = [] }: CalendarPanelProps) {
           </p>
         </div>
       ) : (
-        <div className="flex-1 overflow-y-auto space-y-3 pr-1 max-h-[360px] custom-scrollbar">
+        <div className="flex-1 space-y-3">
           {sortedEvents.map((item) => {
             const countdown = getDaysRemaining(item.eventDate);
             return (

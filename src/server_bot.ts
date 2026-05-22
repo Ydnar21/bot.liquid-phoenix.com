@@ -455,17 +455,25 @@ async function fetchAlpacaBars(symbol: string, limitDays: number = 300): Promise
     const timeframe = "1Day";
     const feed = isPaper ? "iex" : "sip"; // Use standard feeds
 
-    const url = `https://data.alpaca.markets/v2/stocks/bars?symbols=${symbol}&timeframe=${timeframe}&start=${startStr}&limit=${limitDays}&feed=${feed}&adjustment=all`;
-
     const headers = {
       "APCA-API-KEY-ID": apiKey,
       "APCA-API-SECRET-KEY": apiSecret,
     };
 
-    const response = await fetch(url, { headers });
+    // Try primary feed first
+    const primaryUrl = `https://data.alpaca.markets/v2/stocks/bars?symbols=${symbol}&timeframe=${timeframe}&start=${startStr}&limit=${limitDays}&feed=${feed}&adjustment=all`;
+    let response = await fetch(primaryUrl, { headers });
+    
+    // If feed isn't authorized, retry without specifying the 'feed' parameter so Alpaca selects automatically
     if (!response.ok) {
       const errText = await response.text();
-      throw new Error(`Alpaca bars error (${response.status}): ${errText}`);
+      addLog("INFO", `[MARKET DATA] Primary feed ${feed} query returned status ${response.status} for ${symbol}. Retrying without feed constraint...`);
+      const fallbackUrl = `https://data.alpaca.markets/v2/stocks/bars?symbols=${symbol}&timeframe=${timeframe}&start=${startStr}&limit=${limitDays}&adjustment=all`;
+      response = await fetch(fallbackUrl, { headers });
+      if (!response.ok) {
+        const fallbackErrText = await response.text();
+        throw new Error(`Alpaca bars error (${response.status} / fallback ${response.status}): ${fallbackErrText}`);
+      }
     }
 
     const json = await response.json();

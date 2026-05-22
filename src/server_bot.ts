@@ -1,7 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import fs from "fs";
 import path from "path";
-import { BotConfig, StockSetup, ActivePosition, ClosedTrade, BotLog, BotState } from "./types.js";
+import { BotConfig, StockSetup, ActivePosition, ClosedTrade, BotLog, BotState, StoredEvent } from "./types.js";
 import { getAdminDb, switchToDefaultDatabase } from "./firebase_server.js";
 
 const getDb = () => getAdminDb();
@@ -52,14 +52,77 @@ let botState: BotState = {
   spyPrice: 0,
   fomcBlackout: false,
   isMarketOpen: true,
+  storedEvents: [],
 };
+
+// Event Storage Management Helpers
+export function storeEvent(
+  source: 'FOMC' | 'CPI' | 'EARNINGS' | 'CATALYST',
+  eventName: string,
+  eventDate: string,
+  symbol?: string,
+  details?: string
+) {
+  if (!botState.storedEvents) {
+    botState.storedEvents = [];
+  }
+
+  // Normalize YYYY-MM-DD format
+  let normalizedDate = eventDate.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDate)) {
+    const match = normalizedDate.match(/\d{4}-\d{2}-\d{2}/);
+    if (match) {
+      normalizedDate = match[0];
+    } else {
+      return; // Invalid date format and couldn't extract YYYY-MM-DD
+    }
+  }
+
+  const todayStr = new Date().toISOString().split("T")[0];
+  // Do not add past events
+  if (normalizedDate < todayStr) {
+    return;
+  }
+
+  const existingIndex = botState.storedEvents.findIndex(
+    e => e.source === source && e.symbol === symbol && e.eventDate === normalizedDate
+  );
+
+  if (existingIndex >= 0) {
+    botState.storedEvents[existingIndex].eventName = eventName;
+    botState.storedEvents[existingIndex].details = details;
+  } else {
+    const id = `${source}_${symbol || "GLOBAL"}_${normalizedDate}_${Math.random().toString(36).substring(2, 6)}`;
+    botState.storedEvents.push({
+      id,
+      source,
+      symbol,
+      eventName,
+      eventDate: normalizedDate,
+      details,
+      addedAt: new Date().toISOString(),
+    });
+  }
+
+  purgePassedEvents();
+}
+
+export function purgePassedEvents() {
+  if (!botState.storedEvents) {
+    botState.storedEvents = [];
+    return;
+  }
+  const todayStr = new Date().toISOString().split("T")[0];
+  botState.storedEvents = botState.storedEvents.filter(e => e.eventDate >= todayStr);
+}
 
 // Universe of Top Liquid Growth/Value Leaders in S&P 500 + Nasdaq 100
 // Perfect for Swing Pullback strategy
+// Strictly filtered to EXCLUDE any biotech, pharma, or health industry stocks
 const SECTOR_LEADERS = [
   "AAPL", "MSFT", "AMZN", "GOOGL", "META", "NVDA", "TSLA", "AVGO", "COST", "NFLX",
-  "AMD", "QCOM", "INTC", "ISRG", "SBUX", "TXN", "MDLZ", "GILD", "LRCX", "MU",
-  "VRTX", "PANW", "SNPS", "ADBE", "PYPL", "EA", "AMGN", "ADI", "REGN", "MELI"
+  "AMD", "QCOM", "INTC", "SBUX", "TXN", "MDLZ", "LRCX", "MU", "PANW", "SNPS",
+  "ADBE", "PYPL", "EA", "ADI", "MELI", "CRM", "ORCL", "NOW", "AMAT", "KLAC"
 ];
 
 // Helper to push logs
@@ -82,6 +145,9 @@ export async function loadStateFromDisk() {
           const parsed = snap.data();
           if (parsed) {
             if (parsed.botConfig) botConfig = { ...botConfig, ...parsed.botConfig };
+            if (process.env.GEMINI_API_KEY && (!botConfig.GEMINI_API_KEY || botConfig.GEMINI_API_KEY === "MY_GEMINI_API_KEY")) {
+              botConfig.GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+            }
             if (parsed.activePosition !== undefined) activePosition = parsed.activePosition;
             if (parsed.closedTrades) closedTrades = parsed.closedTrades;
             if (parsed.botLogs) botLogs = parsed.botLogs;
@@ -92,6 +158,7 @@ export async function loadStateFromDisk() {
             // Sync to cache file
             const d = { botConfig, activePosition, closedTrades, botLogs, scannedSetups, botState };
             fs.writeFileSync(DATA_FILE, JSON.stringify(d, null, 2), "utf-8");
+            purgePassedEvents();
             return;
           }
         }
@@ -118,6 +185,9 @@ export async function loadStateFromDisk() {
       const raw = fs.readFileSync(DATA_FILE, "utf-8");
       const parsed = JSON.parse(raw);
       if (parsed.botConfig) botConfig = { ...botConfig, ...parsed.botConfig };
+      if (process.env.GEMINI_API_KEY && (!botConfig.GEMINI_API_KEY || botConfig.GEMINI_API_KEY === "MY_GEMINI_API_KEY")) {
+        botConfig.GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+      }
       if (parsed.activePosition) activePosition = parsed.activePosition;
       if (parsed.closedTrades) closedTrades = parsed.closedTrades;
       if (parsed.botLogs) botLogs = parsed.botLogs;
@@ -128,6 +198,7 @@ export async function loadStateFromDisk() {
       addLog("INFO", "No existing state file. Initializing a new bot state.");
       saveStateToDisk();
     }
+    purgePassedEvents();
   } catch (err) {
     console.error("Failed to load state from disk:", err);
   }
@@ -628,23 +699,23 @@ function getFundamentalMetrics(symbol: string): {
     AMD: { pe: 72.5, revenueGrowth: 5.8, grossMargin: 47.8, netMargin: 1.5, debtToEquity: 0.1, fcfPositive: true, marketCapBillion: 240 },
     QCOM: { pe: 18.2, revenueGrowth: 4.8, grossMargin: 55.4, netMargin: 20.2, debtToEquity: 0.5, fcfPositive: true, marketCapBillion: 195 },
     INTC: { pe: 85.0, revenueGrowth: -2.1, grossMargin: 38.4, netMargin: -1.2, debtToEquity: 0.6, fcfPositive: false, marketCapBillion: 118 },
-    ISRG: { pe: 70.1, revenueGrowth: 14.2, grossMargin: 66.8, netMargin: 21.0, debtToEquity: 0.05, fcfPositive: true, marketCapBillion: 145 },
     SBUX: { pe: 24.1, revenueGrowth: 3.5, grossMargin: 25.1, netMargin: 11.2, debtToEquity: 2.5, fcfPositive: true, marketCapBillion: 98 },
     TXN: { pe: 27.5, revenueGrowth: -9.2, grossMargin: 60.1, netMargin: 28.5, debtToEquity: 0.5, fcfPositive: true, marketCapBillion: 155 },
     MDLZ: { pe: 21.3, revenueGrowth: 6.8, grossMargin: 38.5, netMargin: 12.5, debtToEquity: 0.9, fcfPositive: true, marketCapBillion: 92 },
-    GILD: { pe: 16.4, revenueGrowth: 4.1, grossMargin: 77.2, netMargin: 18.1, debtToEquity: 1.2, fcfPositive: true, marketCapBillion: 95 },
     LRCX: { pe: 26.8, revenueGrowth: -8.1, grossMargin: 46.5, netMargin: 26.1, debtToEquity: 0.4, fcfPositive: true, marketCapBillion: 120 },
     MU: { pe: 99.0, revenueGrowth: -30.0, grossMargin: 22.4, netMargin: -10.5, debtToEquity: 0.3, fcfPositive: false, marketCapBillion: 112 },
-    VRTX: { pe: 28.2, revenueGrowth: 10.5, grossMargin: 52.1, netMargin: 33.2, debtToEquity: 0.1, fcfPositive: true, marketCapBillion: 105 },
     PANW: { pe: 88.4, revenueGrowth: 19.5, grossMargin: 74.2, netMargin: 11.2, debtToEquity: 0.6, fcfPositive: true, marketCapBillion: 99 },
     SNPS: { pe: 62.4, revenueGrowth: 15.2, grossMargin: 78.4, netMargin: 22.1, debtToEquity: 0.1, fcfPositive: true, marketCapBillion: 84 },
     ADBE: { pe: 28.1, revenueGrowth: 10.2, grossMargin: 87.8, netMargin: 26.4, debtToEquity: 0.3, fcfPositive: true, marketCapBillion: 210 },
     PYPL: { pe: 14.8, revenueGrowth: 8.2, grossMargin: 40.2, netMargin: 12.1, debtToEquity: 0.7, fcfPositive: true, marketCapBillion: 68 },
     EA: { pe: 29.4, revenueGrowth: 5.5, grossMargin: 76.5, netMargin: 15.4, debtToEquity: 0.3, fcfPositive: true, marketCapBillion: 38 },
-    AMGN: { pe: 20.1, revenueGrowth: 6.7, grossMargin: 74.1, netMargin: 16.3, debtToEquity: 1.8, fcfPositive: true, marketCapBillion: 142 },
     ADI: { pe: 33.2, revenueGrowth: -7.5, grossMargin: 61.2, netMargin: 21.5, debtToEquity: 0.4, fcfPositive: true, marketCapBillion: 82 },
-    REGN: { pe: 27.2, revenueGrowth: 8.5, grossMargin: 84.1, netMargin: 24.5, debtToEquity: 0.2, fcfPositive: true, marketCapBillion: 96 },
     MELI: { pe: 68.2, revenueGrowth: 35.1, grossMargin: 48.2, netMargin: 7.2, debtToEquity: 0.9, fcfPositive: true, marketCapBillion: 74 },
+    CRM: { pe: 28.2, revenueGrowth: 11.5, grossMargin: 74.5, netMargin: 16.8, debtToEquity: 0.2, fcfPositive: true, marketCapBillion: 280 },
+    ORCL: { pe: 31.4, revenueGrowth: 8.5, grossMargin: 71.5, netMargin: 22.4, debtToEquity: 1.4, fcfPositive: true, marketCapBillion: 340 },
+    NOW: { pe: 48.5, revenueGrowth: 23.2, grossMargin: 78.4, netMargin: 18.5, debtToEquity: 0.1, fcfPositive: true, marketCapBillion: 165 },
+    AMAT: { pe: 21.8, revenueGrowth: 7.2, grossMargin: 46.8, netMargin: 26.5, debtToEquity: 0.3, fcfPositive: true, marketCapBillion: 135 },
+    KLAC: { pe: 24.5, revenueGrowth: 9.4, grossMargin: 59.8, netMargin: 30.2, debtToEquity: 0.4, fcfPositive: true, marketCapBillion: 85 },
   };
 
   const defaultMeta = { pe: 25, revenueGrowth: 12, grossMargin: 48, netMargin: 15, debtToEquity: 0.5, fcfPositive: true, marketCapBillion: 55 };
@@ -694,7 +765,7 @@ export async function updateMarketRegime() {
 
 // Gemini AI search-grounded check for FOMC rate decisions and CPI releases
 async function checkFOMCBlackout() {
-  const geminiKey = botConfig.GEMINI_API_KEY;
+  const geminiKey = botConfig.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
   if (!geminiKey) {
     addLog("WARNING", "No Gemini API key available. Skipping search-grounded FOMC blackout check.");
     botState.fomcBlackout = false;
@@ -708,10 +779,19 @@ async function checkFOMCBlackout() {
     });
 
     const currentDate = new Date().toISOString().split("T")[0];
-    const prompt = `Classify if today (${currentDate}) is within 2 trading days OF an upcoming Federal Reserve FOMC interest rate decision or a major US CPI inflation release. Format your response exactly as a JSON object:
+    const prompt = `Classify if today (${currentDate}) is within 2 trading days OF an upcoming Federal Reserve FOMC interest rate decision or a major US CPI inflation release. Also, look up and find the exact calendar dates of the next upcoming FOMC interest rate decision and the next upcoming major US CPI release.
+    Format your response exactly as this JSON object structure:
     {
       "fomcBlackout": boolean,
-      "details": "A brief explanation of dates found or closest event"
+      "details": "A brief explanation of dates found or closest event",
+      "upcomingEvents": [
+        {
+          "type": "FOMC" or "CPI",
+          "eventName": "Federal Reserve Rate Decision" or "US CPI Inflation Release",
+          "eventDate": "YYYY-MM-DD",
+          "details": "Brief context about the event"
+        }
+      ]
     }`;
 
     addLog("INFO", "Asking Gemini to scan upcoming Fed interest rate and CPI announcements...");
@@ -728,6 +808,15 @@ async function checkFOMCBlackout() {
     const parsed = JSON.parse(text.trim());
     botState.fomcBlackout = !!parsed.fomcBlackout;
     botState.fomcDetails = parsed.details || "None identified";
+
+    if (Array.isArray(parsed.upcomingEvents)) {
+      parsed.upcomingEvents.forEach((ev: any) => {
+        if (ev.type && ev.eventName && ev.eventDate) {
+          const typeUpper = ev.type.toUpperCase() as 'FOMC' | 'CPI' | 'EARNINGS' | 'CATALYST';
+          storeEvent(typeUpper, ev.eventName, ev.eventDate, undefined, ev.details);
+        }
+      });
+    }
 
     if (botState.fomcBlackout) {
       addLog("WARNING", `PRE-FOMC/CPI BLACKOUT REGISTERED: ${botState.fomcDetails}`);
@@ -795,7 +884,7 @@ export async function scanForSetups() {
           continue;
         }
 
-        // Filter Rule: RSI, Fair Value Gaps (FVG) and Supply/Demand entry triggers
+        // Filter Rule: RSI and Simple Swing Pullback entry triggers
         const rsiHistory = [];
         for (let j = 10; j >= 0; j--) {
           const subBars = bars.slice(0, bars.length - j);
@@ -806,22 +895,27 @@ export async function scanForSetups() {
         const historicalDipped = rsiHistory.slice(0, -1).some(r => r < 40);
         const bouncedAbove = currentRSI >= 40;
 
-        // Custom high-probability setups from user rules
+        // Custom high-probability swing pullback setups
         const rsiRecovery = historicalDipped && bouncedAbove;
-        const fvgResult = detectFairValueGaps(bars);
         const sdZones = calculateSupplyDemandZones(bars);
 
-        const priceNearDemand = currentPrice <= (sdZones.demandZone * 1.05); // Price is within 5% of support / demand zone
+        // Simple but highly effective swing pullback indicators:
+        // 1. Price Pullback to 50 SMA (testing within 3% of SMA50 line)
+        const priceNearSMA50 = currentPrice >= sma50 * 0.97 && currentPrice <= sma50 * 1.03;
+        // 2. Price near major demand support ceiling (within 3%)
+        const priceNearDemand = currentPrice <= (sdZones.demandZone * 1.03);
+        // 3. Daily RSI level is oversold
         const rsiOversold = currentRSI <= 38;
 
-        // We require at least ONE dynamic entry confirmation:
+        // We require at least ONE simple & effective dynamic swing pullback confirmation:
         // - Classic RSI pullback recovery bounce
-        // - An active Bullish Fair Value Gap (momentum trigger)
-        // - Testing down into the major Demand Zone (oversold structure)
+        // - Testing down near the institutional SMA(50) moving average support
+        // - Testing down into the major Daily Demand Zone level
+        // - Daily RSI entering oversold zone
         const entriesTriggered: string[] = [];
         if (rsiRecovery) entriesTriggered.push("RSI Recovery");
-        if (fvgResult.hasBullishFVG) entriesTriggered.push(`Bullish FVG at $${fvgResult.bullishFVGPrice}`);
-        if (priceNearDemand) entriesTriggered.push(`Demand Zone Support at $${sdZones.demandZone}`);
+        if (priceNearSMA50) entriesTriggered.push(`SMA(50) Support Pullback`);
+        if (priceNearDemand) entriesTriggered.push(`Support Zone Floor at $${sdZones.demandZone}`);
         if (rsiOversold) entriesTriggered.push(`RSI Oversold (${Math.round(currentRSI)})`);
 
         if (entriesTriggered.length === 0) {
@@ -897,8 +991,10 @@ export async function scanForSetups() {
           catalystEvent: "Dynamic event window",
           catalystDate: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
           relativeStrengthRatio: Math.round(relativeStrengthRatio * 10000) / 10000,
-          hasBullishFVG: fvgResult.hasBullishFVG,
-          bullishFVGPrice: fvgResult.bullishFVGPrice,
+          hasBullishFVG: false,
+          bullishFVGPrice: 0,
+          isSMAPullback: priceNearSMA50,
+          sma50Price: Math.round(sma50 * 100) / 100,
           supplyZone: sdZones.supplyZone,
           demandZone: sdZones.demandZone,
           avgVolume20d: Math.round(avgVol20),
@@ -976,7 +1072,7 @@ async function fetchAlpacaNews(symbol: string): Promise<any[]> {
 
 // News agent sentry powered by Gemini with Search Grounding & real Alpaca News API Feed
 async function runGeminiSentimentAgent(setup: StockSetup): Promise<StockSetup> {
-  const geminiKey = botConfig.GEMINI_API_KEY;
+  const geminiKey = botConfig.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
   if (!geminiKey) {
     setup.sentimentScore = 0.5;
     setup.sentimentReason = "Gemini API key is not supplied. Standard positive ranking fallback.";
@@ -1034,7 +1130,8 @@ async function runGeminiSentimentAgent(setup: StockSetup): Promise<StockSetup> {
       "sentimentReason": "A detailed 2-sentence summary of recent headlines, overall market mood, and sector trend",
       "blockersFound": ["Reason for block" or leave array empty if clean],
       "catalystEvent": "Brief description of any immediate launch/event found, or default rumor calendar",
-      "catalystDate": "YYYY-MM-DD"
+      "catalystDate": "YYYY-MM-DD",
+      "estimatedEarningsDate": "YYYY-MM-DD" or null
     }`;
 
     const response = await ai.models.generateContent({
@@ -1052,6 +1149,14 @@ async function runGeminiSentimentAgent(setup: StockSetup): Promise<StockSetup> {
     setup.blockersFound = parsed.blockersFound ?? [];
     setup.catalystEvent = parsed.catalystEvent ?? "Product Launch rumour cycle";
     setup.catalystDate = parsed.catalystDate ?? setup.catalystDate;
+
+    // Persist discovered events to memory/disk calendar store
+    if (setup.catalystDate && setup.catalystEvent && /^\d{4}-\d{2}-\d{2}$/.test(setup.catalystDate)) {
+      storeEvent("CATALYST", `${setup.symbol}: ${setup.catalystEvent}`, setup.catalystDate, setup.symbol, "Screener scanned upcoming catalyst");
+    }
+    if (parsed.estimatedEarningsDate && /^\d{4}-\d{2}-\d{2}$/.test(parsed.estimatedEarningsDate)) {
+      storeEvent("EARNINGS", `${setup.symbol} Upcoming Earnings`, parsed.estimatedEarningsDate, setup.symbol, "Screener scanned upcoming earnings date");
+    }
 
     if (setup.blockersFound.length > 0) {
       addLog("WARNING", `Gemini News Sentry flagged HARD-BLOCK on ${setup.symbol}: ${setup.blockersFound.join(", ")}`);
@@ -1072,6 +1177,11 @@ export async function deployPortfolio(symbol: string): Promise<boolean> {
   addLog("INFO", `Attempting to deploy 100% of portfolio equity to buy ${symbol}...`);
 
   try {
+    // Strict requirement: Only allow trading of the 30 listed stocks in SECTOR_LEADERS
+    if (!SECTOR_LEADERS.includes(symbol.toUpperCase())) {
+      throw new Error(`Deployment blocked: ${symbol} is not within the 30 allowed listed stocks.`);
+    }
+
     // 1. Enforce Max 1 Trade at a time
     if (activePosition) {
       throw new Error(`Cannot deploy portfolio. Active position in ${activePosition.symbol} already exists.`);
@@ -1195,8 +1305,10 @@ export async function deployPortfolio(symbol: string): Promise<boolean> {
       earningsDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0], // Estimated default
       status: "NORMAL",
       enteredAt: new Date().toISOString(),
-      hasBullishFVG: proposal.hasBullishFVG,
-      bullishFVGPrice: proposal.bullishFVGPrice,
+      hasBullishFVG: false,
+      bullishFVGPrice: 0,
+      isSMAPullback: proposal.isSMAPullback,
+      sma50Price: proposal.sma50Price,
       supplyZone: proposal.supplyZone,
       demandZone: proposal.demandZone,
       avgVolume20d: proposal.avgVolume20d,
@@ -1218,7 +1330,7 @@ export async function deployPortfolio(symbol: string): Promise<boolean> {
 // Fetch precise company earnings and events via Gemini
 async function updatePreciseDatesForPosition() {
   if (!activePosition) return;
-  const geminiKey = botConfig.GEMINI_API_KEY;
+  const geminiKey = botConfig.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
   if (!geminiKey) return;
 
   try {
@@ -1249,11 +1361,13 @@ async function updatePreciseDatesForPosition() {
     if (parsed.earningsDate && activePosition) {
       activePosition.earningsDate = parsed.earningsDate;
       addLog("SUCCESS", `Target Earnings Date for ${activePosition.symbol}: ${parsed.earningsDate}`);
+      storeEvent("EARNINGS", `${activePosition.symbol} Quarterly Earnings`, parsed.earningsDate, activePosition.symbol, "Active holding quarterly earnings date.");
     }
     if (parsed.catalystDate && parsed.catalystEvent && activePosition) {
       activePosition.catalystDate = parsed.catalystDate;
       activePosition.catalystEvent = parsed.catalystEvent;
       addLog("SUCCESS", `Identified Catalyst Event: ${parsed.catalystEvent} on ${parsed.catalystDate}`);
+      storeEvent("CATALYST", `${activePosition.symbol}: ${parsed.catalystEvent}`, parsed.catalystDate, activePosition.symbol, "Active holding high-priority catalyst event.");
     }
 
     saveStateToDisk();
@@ -1346,7 +1460,7 @@ export async function evaluateActivePosition() {
 // Ask Gemini to audit risk after a support level breach
 async function runGeminiRiskReevaluation() {
   if (!activePosition) return;
-  const geminiKey = botConfig.GEMINI_API_KEY;
+  const geminiKey = botConfig.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
   if (!geminiKey) return;
 
   try {
@@ -1512,23 +1626,23 @@ function getCompanyName(ticker: string): string {
     AMD: "Advanced Micro Devices",
     QCOM: "Qualcomm Inc.",
     INTC: "Intel Corp.",
-    ISRG: "Intuitive Surgical",
     SBUX: "Starbucks Corp.",
     TXN: "Texas Instruments",
     MDLZ: "Mondelez International",
-    GILD: "Gilead Sciences",
     LRCX: "Lam Research",
     MU: "Micron Technology",
-    VRTX: "Vertex Pharmaceuticals",
     PANW: "Palo Alto Networks",
     SNPS: "Synopsys Inc.",
     ADBE: "Adobe Inc.",
     PYPL: "PayPal Holdings",
     EA: "Electronic Arts",
-    AMGN: "Amgen Inc.",
     ADI: "Analog Devices",
-    REGN: "Regeneron Pharmaceuticals",
     MELI: "MercadoLibre Inc.",
+    CRM: "Salesforce Inc.",
+    ORCL: "Oracle Corp.",
+    NOW: "ServiceNow Inc.",
+    AMAT: "Applied Materials Inc.",
+    KLAC: "KLA Corp."
   };
   return map[ticker] || ticker;
 }
@@ -1685,7 +1799,12 @@ async function runContinuousBotCycle() {
 }
 
 // API Endpoints Getters & Setters
-export function getBotConfig() { return botConfig; }
+export function getBotConfig() {
+  if (process.env.GEMINI_API_KEY && (!botConfig.GEMINI_API_KEY || botConfig.GEMINI_API_KEY === "MY_GEMINI_API_KEY")) {
+    botConfig.GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+  }
+  return botConfig;
+}
 export function updateBotConfig(newConfig: Partial<BotConfig>) {
   const oldConnection = botConfig.isConnectionActive;
   const oldRunning = botConfig.isBotRunning;

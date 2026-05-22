@@ -37,6 +37,8 @@ export interface StockSetup {
   relativeStrengthRatio: number; // vs SPY
   hasBullishFVG?: boolean;
   bullishFVGPrice?: number;
+  isSMAPullback?: boolean;
+  sma50Price?: number;
   supplyZone?: number;
   demandZone?: number;
   avgVolume20d?: number;
@@ -64,6 +66,8 @@ export interface ActivePosition {
   enteredAt: string;
   hasBullishFVG?: boolean;
   bullishFVGPrice?: number;
+  isSMAPullback?: boolean;
+  sma50Price?: number;
   supplyZone?: number;
   demandZone?: number;
   avgVolume20d?: number;
@@ -101,4 +105,15 @@ export interface BotState {
   fomcBlackout: boolean;
   fomcDetails?: string;
   isMarketOpen?: boolean;
+  storedEvents?: StoredEvent[];
+}
+
+export interface StoredEvent {
+  id: string;
+  source: 'FOMC' | 'CPI' | 'EARNINGS' | 'CATALYST';
+  symbol?: string;
+  eventName: string;
+  eventDate: string; // YYYY-MM-DD
+  details?: string;
+  addedAt: string;
 }

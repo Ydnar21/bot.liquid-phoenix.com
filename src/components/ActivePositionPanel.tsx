@@ -101,9 +101,9 @@ export default function ActivePositionPanel({
               <span className="text-gray-300">
                 RSI: <span className="text-white font-bold">{position.rsiStatus || "NEUTRAL"}</span>
               </span>
-              {position.hasBullishFVG && (
-                <span className="text-sky-400 font-bold">
-                  &bull; Bullish FVG Gap: ${position.bullishFVGPrice}
+              {position.isSMAPullback && (
+                <span className="text-indigo-400 font-bold">
+                  &bull; SMA(50) Pullback Test: ${position.sma50Price}
                 </span>
               )}
               {position.demandZone && (

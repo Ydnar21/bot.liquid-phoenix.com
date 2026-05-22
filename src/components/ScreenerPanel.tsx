@@ -90,9 +90,9 @@ export default function ScreenerPanel({
                         }`}>
                           RSI: {setup.rsi} ({setup.rsiStatus || "NEUTRAL"})
                         </span>
-                        {setup.hasBullishFVG && (
-                          <span className="text-[9px] bg-sky-500/10 border border-sky-500/25 text-sky-400 px-1.5 py-0.5 rounded font-mono font-bold animate-pulse">
-                            Bullish FVG: ${setup.bullishFVGPrice}
+                        {setup.isSMAPullback && (
+                          <span className="text-[9px] bg-indigo-500/10 border border-indigo-500/25 text-indigo-400 px-1.5 py-0.5 rounded font-mono font-bold animate-pulse">
+                            SMA(50) Pullback Test: ${setup.sma50Price}
                           </span>
                         )}
                         <span className="text-[9px] bg-slate-500/15 border border-theme-border text-slate-300 px-1.5 py-0.5 rounded font-mono">

@@ -3,6 +3,7 @@ import { Cpu, Terminal, RefreshCw, Layers, ShieldCheck, HeartHandshake, AlertCir
 import { BotConfig, BotState, ActivePosition, ClosedTrade, BotLog, StockSetup } from "./types";
 import Header from "./components/Header";
 import Settings from "./components/Settings";
+import CalendarPanel from "./components/CalendarPanel";
 import ActivePositionPanel from "./components/ActivePositionPanel";
 import ScreenerPanel from "./components/ScreenerPanel";
 import LogsConsole from "./components/LogsConsole";
@@ -637,6 +638,7 @@ export default function App() {
           {/* Settings Sidebar Panel */}
           <div className="lg:col-span-1 space-y-6">
             <Settings config={config} onSaveConfig={handleSaveConfig} currentUser={user} />
+            <CalendarPanel events={botState.storedEvents || []} />
           </div>
 
           {/* Active Positions & Screener proposals workspace */}

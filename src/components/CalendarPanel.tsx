@@ -78,7 +78,7 @@ export default function CalendarPanel({ events = [] }: CalendarPanelProps) {
           </p>
         </div>
       ) : (
-        <div className="flex-1 space-y-3">
+        <div className="flex-1 space-y-3 max-h-[360px] overflow-y-auto pr-2 custom-scrollbar">
           {sortedEvents.map((item) => {
             const countdown = getDaysRemaining(item.eventDate);
             return (

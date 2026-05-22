@@ -314,6 +314,72 @@ export async function getAllUserCredentials(): Promise<UserCredentials[]> {
   return credentialsList;
 }
 
+// User-specific or Fallback credentials resolver
+export async function resolveCredentialsForUser(userId?: string): Promise<{ ALPACA_API_KEY: string; ALPACA_SECRET_KEY: string; ALPACA_BASE_URL: string } | null> {
+  if (userId) {
+    // 1. Try local offline fallback backup file
+    const fallbackPath = `./private_creds_${userId}.json`;
+    if (fs.existsSync(fallbackPath)) {
+      try {
+        const raw = fs.readFileSync(fallbackPath, "utf-8");
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.ALPACA_API_KEY && parsed.ALPACA_SECRET_KEY) {
+          return {
+            ALPACA_API_KEY: parsed.ALPACA_API_KEY,
+            ALPACA_SECRET_KEY: parsed.ALPACA_SECRET_KEY,
+            ALPACA_BASE_URL: parsed.ALPACA_BASE_URL || "https://paper-api.alpaca.markets",
+          };
+        }
+      } catch (e: any) {
+        console.warn(`resolveCredentialsForUser local backup read error: ${e.message}`);
+      }
+    }
+
+    // 2. Fetch from Firestore
+    try {
+      const db = getDb();
+      if (db && typeof db.collection === "function") {
+        const snap = await db.collection("users").doc(userId).collection("private").doc("credentials").get();
+        if (snap.exists) {
+          const data = snap.data();
+          if (data && data.ALPACA_API_KEY && data.ALPACA_SECRET_KEY) {
+            return {
+              ALPACA_API_KEY: data.ALPACA_API_KEY,
+              ALPACA_SECRET_KEY: data.ALPACA_SECRET_KEY,
+              ALPACA_BASE_URL: data.ALPACA_BASE_URL || "https://paper-api.alpaca.markets",
+            };
+          }
+        }
+      }
+    } catch (e: any) {
+      console.warn(`resolveCredentialsForUser Firestore lookup error: ${e.message}`);
+    }
+  }
+
+  // 3. Fallback to first registered user credentials
+  const users = await getAllUserCredentials();
+  if (users.length > 0) {
+    const match = userId ? users.find((u) => u.userId === userId) : null;
+    const chosen = match || users[0];
+    return {
+      ALPACA_API_KEY: chosen.ALPACA_API_KEY,
+      ALPACA_SECRET_KEY: chosen.ALPACA_SECRET_KEY,
+      ALPACA_BASE_URL: chosen.ALPACA_BASE_URL,
+    };
+  }
+
+  // 4. Default to master bot settings
+  if (botConfig.ALPACA_API_KEY && botConfig.ALPACA_SECRET_KEY) {
+    return {
+      ALPACA_API_KEY: botConfig.ALPACA_API_KEY,
+      ALPACA_SECRET_KEY: botConfig.ALPACA_SECRET_KEY,
+      ALPACA_BASE_URL: botConfig.ALPACA_BASE_URL || "https://paper-api.alpaca.markets",
+    };
+  }
+
+  return null;
+}
+
 // User-specific Alpaca request helper
 async function alpacaUserFetch(
   creds: { ALPACA_API_KEY: string; ALPACA_SECRET_KEY: string; ALPACA_BASE_URL: string },
@@ -345,24 +411,15 @@ async function alpacaUserFetch(
   return response.json();
 }
 
-async function alpacaFetch(endpoint: string, options: RequestInit = {}) {
-  let apiKey = botConfig.ALPACA_API_KEY;
-  let apiSecret = botConfig.ALPACA_SECRET_KEY;
-  let baseUrl = botConfig.ALPACA_BASE_URL || "https://paper-api.alpaca.markets";
-
-  // If master credentials are not filled, use the first registered user's credentials
-  if (!apiKey || !apiSecret) {
-    const users = await getAllUserCredentials();
-    if (users.length > 0) {
-      apiKey = users[0].ALPACA_API_KEY;
-      apiSecret = users[0].ALPACA_SECRET_KEY;
-      baseUrl = users[0].ALPACA_BASE_URL;
-    }
-  }
-
-  if (!apiKey || !apiSecret) {
+async function alpacaFetch(endpoint: string, options: RequestInit = {}, userId?: string) {
+  const creds = await resolveCredentialsForUser(userId);
+  if (!creds) {
     throw new Error("Missing Alpaca API credentials. Please set your credentials in connection settings first.");
   }
+
+  let apiKey = creds.ALPACA_API_KEY;
+  let apiSecret = creds.ALPACA_SECRET_KEY;
+  let baseUrl = creds.ALPACA_BASE_URL || "https://paper-api.alpaca.markets";
 
   baseUrl = baseUrl.replace(/\/$/, "");
 
@@ -501,26 +558,16 @@ export async function getUserAccount(userId: string): Promise<any> {
 
 // Fetch historical bars using user's keys from Alpaca Data API
 // Free paper keys have access to IEX data, standard live keys to SIP. Let's use the appropriate endpoint.
-async function fetchAlpacaBars(symbol: string, limitDays: number = 300): Promise<any[]> {
+async function fetchAlpacaBars(symbol: string, limitDays: number = 300, userId?: string): Promise<any[]> {
   try {
     // Alpaca historical bars can be queried at: https://data.alpaca.markets/v2/stocks/bars
-    let apiKey = botConfig.ALPACA_API_KEY;
-    let apiSecret = botConfig.ALPACA_SECRET_KEY;
-    let isPaper = botConfig.isPaper;
-
-    // Use fallback to first registered copy portfolio user if master keys are empty
-    if (!apiKey || !apiSecret) {
-      const users = await getAllUserCredentials();
-      if (users.length > 0) {
-        apiKey = users[0].ALPACA_API_KEY;
-        apiSecret = users[0].ALPACA_SECRET_KEY;
-        isPaper = (users[0].ALPACA_BASE_URL || "").includes("paper");
-      }
-    }
-
-    if (!apiKey || !apiSecret) {
+    const creds = await resolveCredentialsForUser(userId);
+    if (!creds) {
       throw new Error("Missing credentials for market data endpoint.");
     }
+    const apiKey = creds.ALPACA_API_KEY;
+    const apiSecret = creds.ALPACA_SECRET_KEY;
+    const isPaper = (creds.ALPACA_BASE_URL || "").includes("paper");
 
     const startStr = new Date(Date.now() - limitDays * 24 * 60 * 60 * 1000).toISOString();
     const timeframe = "1Day";
@@ -758,10 +805,10 @@ function getFundamentalMetrics(symbol: string): {
 }
 
 // Global market analysis with SPY to set Market Regime
-export async function updateMarketRegime() {
+export async function updateMarketRegime(userId?: string) {
   try {
     addLog("INFO", "Updating market regime with SPY status...");
-    const spyBars = await fetchAlpacaBars("SPY", 300);
+    const spyBars = await fetchAlpacaBars("SPY", 300, userId);
     if (!spyBars || spyBars.length < 200) {
       addLog("WARNING", "Insufficient historical bars for SPY. Defaulting to NORMAL regime.");
       botState.marketRegime = "NORMAL";
@@ -865,21 +912,21 @@ async function checkFOMCBlackout() {
 }
 
 // Main autonomous scanner function
-export async function scanForSetups() {
+export async function scanForSetups(userId?: string) {
   addLog("INFO", "Initiating scan for high-quality setups across S&P 500 & Nasdaq 100 constituents...");
   scannedSetups = [];
   saveStateToDisk();
 
   try {
     // 1. Refresh regime
-    await updateMarketRegime();
+    await updateMarketRegime(userId);
 
     if (botState.marketRegime === "STANDBY") {
       addLog("WARNING", "Market is in STANDBY regime. Scans are logged but active trading is paused.");
     }
 
     // SPY bars to calculate sector relative strength
-    const spyBars = await fetchAlpacaBars("SPY", 100);
+    const spyBars = await fetchAlpacaBars("SPY", 100, userId);
     let spyReturn10 = 0;
     if (spyBars && spyBars.length > 10) {
       spyReturn10 = (spyBars[spyBars.length - 1].c - spyBars[spyBars.length - 11].c) / spyBars[spyBars.length - 11].c;
@@ -890,7 +937,7 @@ export async function scanForSetups() {
     // Loop through sector leaders list
     for (const ticker of SECTOR_LEADERS) {
       try {
-        const bars = await fetchAlpacaBars(ticker, 250);
+        const bars = await fetchAlpacaBars(ticker, 250, userId);
         if (!bars || bars.length < 200) continue;
 
         const currentPrice = bars[bars.length - 1].c;
@@ -1044,7 +1091,7 @@ export async function scanForSetups() {
     // 2. Pass setups through Gemini news agent & geopolitical filter
     const evaluatedSetups: StockSetup[] = [];
     for (const setup of proposedSetups) {
-      const completion = await runGeminiSentimentAgent(setup);
+      const completion = await runGeminiSentimentAgent(setup, userId);
       evaluatedSetups.push(completion);
     }
 
@@ -1092,22 +1139,14 @@ export async function scanForSetups() {
 }
 
 // Fetch recent news articles from Alpaca News API using standard API credentials
-async function fetchAlpacaNews(symbol: string): Promise<any[]> {
-  let apiKey = botConfig.ALPACA_API_KEY;
-  let apiSecret = botConfig.ALPACA_SECRET_KEY;
-
-  if (!apiKey || !apiSecret) {
-    const users = await getAllUserCredentials();
-    if (users.length > 0) {
-      apiKey = users[0].ALPACA_API_KEY;
-      apiSecret = users[0].ALPACA_SECRET_KEY;
-    }
-  }
-
-  if (!apiKey || !apiSecret) {
+async function fetchAlpacaNews(symbol: string, userId?: string): Promise<any[]> {
+  const creds = await resolveCredentialsForUser(userId);
+  if (!creds) {
     console.warn(`[NEWS ENGINE] Missing credentials, unable to fetch Alpaca news for ${symbol}.`);
     return [];
   }
+  const apiKey = creds.ALPACA_API_KEY;
+  const apiSecret = creds.ALPACA_SECRET_KEY;
 
   try {
     const url = `https://data.alpaca.markets/v1beta1/news?symbols=${symbol}&limit=5`;
@@ -1130,7 +1169,7 @@ async function fetchAlpacaNews(symbol: string): Promise<any[]> {
 }
 
 // News agent sentry powered by Gemini with Search Grounding & real Alpaca News API Feed
-async function runGeminiSentimentAgent(setup: StockSetup): Promise<StockSetup> {
+async function runGeminiSentimentAgent(setup: StockSetup, userId?: string): Promise<StockSetup> {
   const geminiKey = botConfig.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
   if (!geminiKey) {
     setup.sentimentScore = 0.5;
@@ -1140,7 +1179,7 @@ async function runGeminiSentimentAgent(setup: StockSetup): Promise<StockSetup> {
 
   let alpacaNewsText = "No direct recent Alpaca news found.";
   try {
-    const articles = await fetchAlpacaNews(setup.symbol);
+    const articles = await fetchAlpacaNews(setup.symbol, userId);
     if (articles && articles.length > 0) {
       alpacaNewsText = articles
         .map((art: any, idx: number) => {
@@ -1232,7 +1271,7 @@ async function runGeminiSentimentAgent(setup: StockSetup): Promise<StockSetup> {
 }
 
 // Portfolio deployment & Trade placement via Alpaca
-export async function deployPortfolio(symbol: string): Promise<boolean> {
+export async function deployPortfolio(symbol: string, userId?: string): Promise<boolean> {
   addLog("INFO", `Attempting to deploy 100% of portfolio equity to buy ${symbol}...`);
 
   try {
@@ -1249,7 +1288,7 @@ export async function deployPortfolio(symbol: string): Promise<boolean> {
     // Double check Alpaca for any active positions to synchronize perfectly!
     let positionsOnAlpaca: any[] = [];
     try {
-      positionsOnAlpaca = await alpacaFetch("/v2/positions");
+      positionsOnAlpaca = await alpacaFetch("/v2/positions", {}, userId);
     } catch (e) {
       addLog("WARNING", "Could not verify open positions on Alpaca. Proceeding with in-memory check.");
     }
@@ -1274,7 +1313,7 @@ export async function deployPortfolio(symbol: string): Promise<boolean> {
     }
 
     // 4. Fetch live bar or quote to verify limit/market execution price
-    const bars = await fetchAlpacaBars(symbol, 5);
+    const bars = await fetchAlpacaBars(symbol, 5, userId);
     const livePrice = bars.length > 0 ? bars[bars.length - 1].c : proposal.price;
     // Enter exactly at the demand/support zone price with a limit buy order
     const entryPrice = proposal.demandZone && proposal.demandZone > 0 ? proposal.demandZone : livePrice;
@@ -1285,7 +1324,22 @@ export async function deployPortfolio(symbol: string): Promise<boolean> {
     // Set target profit to exit at the resistance zone (supplyZone)
     const targetPrice = proposal.supplyZone && proposal.supplyZone > 0 ? proposal.supplyZone : (proposal.targetPrice || Math.round(entryPrice * 1.1 * 100) / 100);
 
-    const users = await getAllUserCredentials();
+    let users: UserCredentials[] = [];
+    if (userId) {
+      const specificCreds = await resolveCredentialsForUser(userId);
+      if (specificCreds) {
+        users.push({
+          userId,
+          ALPACA_API_KEY: specificCreds.ALPACA_API_KEY,
+          ALPACA_SECRET_KEY: specificCreds.ALPACA_SECRET_KEY,
+          ALPACA_BASE_URL: specificCreds.ALPACA_BASE_URL,
+        });
+      }
+    }
+    if (users.length === 0) {
+      users = await getAllUserCredentials();
+    }
+
     let totalExecutedQty = 0;
     let anySuccess = false;
 
@@ -1329,11 +1383,11 @@ export async function deployPortfolio(symbol: string): Promise<boolean> {
     } else {
       // Fallback single-user or master botConfig
       addLog("INFO", "No multi-user copy trading keys registered in Firestore. Falling back to default settings...");
-      const account = await alpacaFetch("/v2/account");
+      const account = await alpacaFetch("/v2/account", {}, userId);
       const equity = parseFloat(account.equity || account.cash);
       const qty = Math.floor(equity / entryPrice);
       if (qty <= 0) {
-        throw new Error(`Calculated qty is 0. Balance too low to buy a single share at $${entryPrice.toFixed(2)}.`);
+        throw new Error(`Calculated qty is 0. Balance too low to buy a single share at ${entryPrice.toFixed(2)}.`);
       }
 
       const orderPayload = {
@@ -1348,7 +1402,7 @@ export async function deployPortfolio(symbol: string): Promise<boolean> {
       const orderRes = await alpacaFetch("/v2/orders", {
         method: "POST",
         body: JSON.stringify(orderPayload),
-      });
+      }, userId);
 
       addLog("SUCCESS", `Default connection buy order placed successfully! Qty: ${qty}, Order ID: ${orderRes.id}`);
       totalExecutedQty = qty;

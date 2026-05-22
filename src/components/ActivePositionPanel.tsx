@@ -148,9 +148,9 @@ export default function ActivePositionPanel({
             <span className="text-gray-500 uppercase font-bold text-[10px]">Pre-Earnings Sell Day:</span>
             <span className="text-gray-300 font-semibold text-right">{position.earningsDate || "N/A"}</span>
           </div>
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 py-1.5 border-b border-theme-border/20 last:border-0">
-            <span className="text-gray-500 uppercase font-bold text-[10px]">Estimated Catalyst Event:</span>
-            <span className="text-theme-accent font-bold uppercase truncate max-w-full sm:max-w-[260px] text-left sm:text-right" title={position.catalystEvent}>
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-1 py-1.5 border-b border-theme-border/20 last:border-0">
+            <span className="text-gray-500 uppercase font-bold text-[10px] shrink-0">Estimated Catalyst Event:</span>
+            <span className="text-theme-accent font-bold uppercase break-words whitespace-normal text-left sm:text-right text-[11px] leading-tight max-w-full sm:max-w-[180px] md:max-w-[240px]" title={position.catalystEvent}>
               {position.catalystEvent || "None Detected"}
             </span>
           </div>

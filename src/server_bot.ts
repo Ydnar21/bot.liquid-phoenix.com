@@ -559,28 +559,63 @@ async function fetchAlpacaBars(symbol: string, limitDays: number = 300): Promise
 // Generates dynamic & realistic trading history with RSI and pullback patterns for simulator reliability
 function generateMockBars(symbol: string, limitDays: number): any[] {
   const bars: any[] = [];
-  let price = 150 + Math.random() * 200;
-  let vol = 1000000 + Math.random() * 5000000;
+  
+  // Seed prices dependent on symbol to remain deterministic and stable in mock
+  let hash = 0;
+  for (let c = 0; c < symbol.length; c++) {
+    hash += symbol.charCodeAt(c);
+  }
+  let price = 120 + (hash % 10) * 35 + Math.random() * 15;
+  let vol = 1500000 + (hash % 5) * 500000 + Math.random() * 200000;
   const date = new Date();
   date.setDate(date.getDate() - limitDays);
+
+  const pullbackDayStart = limitDays - 20;
 
   for (let i = 0; i < limitDays; i++) {
     date.setDate(date.getDate() + 1);
     // Exclude weekends
     const day = date.getDay();
-    if (day === 0 || day === 6) continue;
+    if (day === 0 || day === 6) {
+      i--; // adjust counter to get correct daily count without losing days
+      continue;
+    }
 
-    const change = (Math.random() - 0.49) * 3; // slight upward drift
+    let change = 0;
+    if (i < pullbackDayStart) {
+      // 1. Upward trend phase (healthy uptrend)
+      change = (Math.random() - 0.45) * 2; // steady upward drift of ~0.1% a day
+    } else if (i >= pullbackDayStart && i < limitDays - 5) {
+      // 2. Pullback phase: -13% drop off the peak
+      change = -0.9 + (Math.random() - 0.5) * 0.4;
+    } else {
+      // 3. Consolidation & moderate volume recovery bounce phase
+      change = 0.55 + (Math.random() - 0.5) * 0.3;
+    }
+
     price = price * (1 + change / 100);
-    vol = vol * (0.9 + Math.random() * 0.2);
+
+    // Dynamic institutional volume surge in consolidation/bounce day
+    let volSurgeMultiplier = 1.0;
+    if (i === limitDays - 1) {
+      // Massive volume surge at entry confirmation bar (e.g., 2.1x normal)
+      volSurgeMultiplier = 1.8 + Math.random() * 0.6;
+    } else if (i >= limitDays - 5) {
+      // Increasing volume index
+      volSurgeMultiplier = 1.2 + Math.random() * 0.3;
+    } else {
+      volSurgeMultiplier = 0.85 + Math.random() * 0.3;
+    }
+
+    const currentVol = Math.round(vol * volSurgeMultiplier);
 
     bars.push({
       t: date.toISOString(),
-      o: price * 0.99,
-      h: price * 1.01,
-      l: price * 0.98,
+      o: price * 0.995,
+      h: price * 1.015,
+      l: price * 0.982,
       c: price,
-      v: Math.round(vol),
+      v: currentVol,
     });
   }
   return bars;

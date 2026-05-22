@@ -44,7 +44,7 @@ export default function Header({
         </div>
 
         {/* State details */}
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center justify-start lg:justify-end gap-3 w-full lg:w-auto">
           {/* Market Regime */}
           {isAnyActive && (
             <div className="flex items-center gap-2 bg-theme-input border border-theme-border px-3 py-1.5 rounded text-xs font-mono">

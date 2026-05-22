@@ -92,11 +92,11 @@ export default function CalendarPanel({ events = [] }: CalendarPanelProps) {
                 </div>
 
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-bold text-white truncate uppercase tracking-tight">
+                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2">
+                    <span className="text-xs font-bold text-white uppercase tracking-tight break-words whitespace-normal leading-snug">
                       {item.eventName}
                     </span>
-                    <span className={`text-[9px] font-mono font-bold whitespace-nowrap px-1.5 py-0.5 rounded border ${
+                    <span className={`text-[9px] font-mono font-bold whitespace-nowrap px-1.5 py-0.5 rounded border self-start ${
                       countdown.isCritical 
                         ? "bg-rose-500/10 border-rose-500/20 text-rose-400 animate-pulse" 
                         : "bg-slate-500/10 border-slate-500/20 text-slate-300"
@@ -105,7 +105,7 @@ export default function CalendarPanel({ events = [] }: CalendarPanelProps) {
                     </span>
                   </div>
 
-                  <p className="text-[10px] text-gray-400 mt-1 line-clamp-2 uppercase font-mono">
+                  <p className="text-[10px] text-gray-400 mt-1.5 break-words whitespace-normal font-mono leading-relaxed">
                     {item.details || "Discovered by Gemini AI News Sentry"}
                   </p>
 

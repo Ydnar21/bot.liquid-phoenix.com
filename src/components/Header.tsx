@@ -6,21 +6,27 @@ interface HeaderProps {
   botState: BotState;
   botConfig: BotConfig;
   onToggleBot: () => void;
+  onToggleConnection: () => void;
   onTriggerScan: () => void;
   isScanning: boolean;
   currentUser: any;
   onSignOut: () => void;
+  alpacaAccount?: any;
 }
 
 export default function Header({
   botState,
   botConfig,
   onToggleBot,
+  onToggleConnection,
   onTriggerScan,
   isScanning,
   currentUser,
   onSignOut,
+  alpacaAccount,
 }: HeaderProps) {
+  const isAnyActive = botConfig.isConnectionActive || botConfig.isBotRunning;
+
   return (
     <header className="border-b border-theme-border bg-theme-panel sticky top-0 z-50 px-6 py-4">
       <div className="max-w-7xl mx-auto flex flex-col lg:flex-row items-center justify-between gap-4">
@@ -40,75 +46,148 @@ export default function Header({
         {/* State details */}
         <div className="flex flex-wrap items-center gap-3">
           {/* Market Regime */}
-          <div className="flex items-center gap-2 bg-theme-input border border-theme-border px-3 py-1.5 rounded text-xs font-mono">
-            <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
-            <span className="text-gray-500 uppercase font-black text-[10px]">Regime:</span>
-            <span className={`font-mono font-bold ${
-              botState.marketRegime === "NORMAL" 
-                ? "text-emerald-400" 
-                : botState.marketRegime === "STRICT_VOLUME" 
-                ? "text-amber-400" 
-                : "text-rose-400"
-            }`}>
-              {botState.marketRegime}
-            </span>
-            {botState.spyPrice > 0 && (
-              <span className="text-gray-400">
-                (SPY ${botState.spyPrice.toFixed(1)})
+          {isAnyActive && (
+            <div className="flex items-center gap-2 bg-theme-input border border-theme-border px-3 py-1.5 rounded text-xs font-mono">
+              <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="text-gray-500 uppercase font-black text-[10px]">Regime:</span>
+              <span className={`font-mono font-bold ${
+                botState.marketRegime === "NORMAL" 
+                  ? "text-emerald-400" 
+                  : botState.marketRegime === "STRICT_VOLUME" 
+                  ? "text-amber-400" 
+                  : "text-rose-400"
+              }`}>
+                {botState.marketRegime}
               </span>
-            )}
-          </div>
-
-          {/* FOMC/CPI Status */}
-          {botState.fomcBlackout ? (
-            <div className="flex items-center gap-1.5 bg-rose-500/10 border border-rose-500/20 px-3 py-1.5 rounded text-[10px] text-rose-400 font-bold font-mono uppercase">
-              <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
-              <span>BLACKOUT ACTIVATED</span>
-            </div>
-          ) : (
-            <div className="flex items-center gap-1.5 bg-theme-input border border-theme-border px-3 py-1.5 rounded text-[10px] text-emerald-400 font-bold font-mono">
-              <span>● NO BLACKOUT DETECTED</span>
+              {botState.spyPrice > 0 && (
+                <span className="text-gray-400">
+                  (SPY ${botState.spyPrice.toFixed(1)})
+                </span>
+              )}
             </div>
           )}
 
+          {/* FOMC/CPI Status */}
+          {isAnyActive && (
+            botState.fomcBlackout ? (
+              <div className="flex items-center gap-1.5 bg-rose-500/10 border border-rose-500/20 px-3 py-1.5 rounded text-[10px] text-rose-400 font-bold font-mono uppercase">
+                <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+                <span>BLACKOUT ACTIVATED</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 bg-theme-input border border-theme-border px-3 py-1.5 rounded text-[10px] text-emerald-400 font-bold font-mono">
+                <span>● NO BLACKOUT DETECTED</span>
+              </div>
+            )
+          )}
+
           {/* Market Session Status Badge */}
-          <div className={`flex items-center gap-2 px-3 py-1.5 rounded border text-[10px] font-mono font-bold ${
-            botState.isMarketOpen 
-              ? "bg-indigo-500/15 border-indigo-500/35 text-indigo-400" 
-              : "bg-amber-500/15 border-amber-500/35 text-amber-400"
-          }`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${botState.isMarketOpen ? "bg-indigo-400 animate-pulse" : "bg-amber-500"}`} />
-            <span>{botState.isMarketOpen ? "MARKET HOURS" : "MARKET CLOSED"}</span>
-          </div>
+          {isAnyActive && (
+            <div className={`flex items-center gap-2 px-3 py-1.5 rounded border text-[10px] font-mono font-bold ${
+              botState.isMarketOpen 
+                ? "bg-indigo-500/15 border-indigo-500/35 text-indigo-400" 
+                : "bg-amber-500/15 border-amber-500/35 text-amber-400"
+            }`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${botState.isMarketOpen ? "bg-indigo-400 animate-pulse" : "bg-amber-500"}`} />
+              <span>{botState.isMarketOpen ? "MARKET HOURS" : "MARKET CLOSED"}</span>
+            </div>
+          )}
 
           {/* Active / Offline Status Badge */}
           <div className={`flex items-center gap-2 px-3 py-1.5 rounded border text-[10px] font-mono font-bold ${
-            botConfig.isBotRunning 
-              ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" 
+            isAnyActive 
+              ? (alpacaAccount && (alpacaAccount.status === "connected" || alpacaAccount.status === "success")
+                ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" 
+                : "bg-amber-500/10 border-amber-500/30 text-amber-500")
               : "bg-theme-input border-theme-border text-gray-500"
           }`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${botConfig.isBotRunning ? "bg-emerald-400 animate-pulse" : "bg-white/20"}`} />
-            <span>{botConfig.isBotRunning ? "● ALPACA CONNECTED" : "ALPACA HOLD"}</span>
+            <span className={`w-1.5 h-1.5 rounded-full ${
+              isAnyActive 
+                ? (alpacaAccount && (alpacaAccount.status === "connected" || alpacaAccount.status === "success")
+                  ? "bg-emerald-400 animate-pulse" 
+                  : "bg-amber-500 animate-pulse")
+                : "bg-white/20"
+            }`} />
+            <span>
+              {botConfig.isBotRunning 
+                ? "● SWING BOT ACTIVE"
+                : botConfig.isConnectionActive
+                ? (alpacaAccount && (alpacaAccount.status === "connected" || alpacaAccount.status === "success")
+                  ? "● ALPACA CONNECTED" 
+                  : "● ALPACA STANDBY")
+                : "ALPACA HOLD"}
+            </span>
           </div>
+
+          {/* Live Alpaca Account Balance & Cash Badges */}
+          {isAnyActive && alpacaAccount && (alpacaAccount.status === "connected" || alpacaAccount.status === "success") && (
+            <div className="flex items-center gap-1.5 bg-theme-input border border-theme-accent/50 px-3 py-1.5 rounded text-[10px] font-mono">
+              <span className="text-gray-400 uppercase font-black">{alpacaAccount.isPaper ? "PAPER" : "LIVE"} BAL:</span>
+              <span className="text-theme-accent font-black">
+                ${alpacaAccount.equity?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+              <span className="text-gray-600">|</span>
+              <span className="text-gray-400 uppercase font-black">CASH:</span>
+              <span className="text-white font-bold">
+                ${alpacaAccount.cash?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+          )}
+
+          {isAnyActive && alpacaAccount && alpacaAccount.status === "error" && (
+            <div className="flex items-center gap-1.5 bg-rose-500/10 border border-rose-500/20 px-3 py-1.5 rounded text-[10px] text-rose-400 font-bold font-mono uppercase">
+              <span>⚠️ Alpaca Access Revoked</span>
+            </div>
+          )}
+
+          {isAnyActive && (!alpacaAccount || alpacaAccount.status === "unconfigured" || alpacaAccount.status === "bot_paused") && (
+            <div className="flex items-center gap-1.5 bg-theme-input border border-theme-border px-3 py-1.5 rounded text-[10px] text-amber-500 font-bold font-mono uppercase">
+              <span>CONNECTING...</span>
+            </div>
+          )}
 
           {/* Actions */}
           <button
-            onClick={onToggleBot}
+            onClick={onToggleConnection}
             className={`flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider px-4 py-2 rounded shadow-sm transition-all duration-150 cursor-pointer ${
-              botConfig.isBotRunning
-                ? "bg-rose-600 text-white hover:bg-rose-700"
+              botConfig.isConnectionActive
+                ? "bg-rose-950/40 border border-rose-800 text-rose-300 hover:bg-rose-900/40"
                 : "bg-theme-accent text-black hover:bg-orange-600"
             }`}
           >
-            {botConfig.isBotRunning ? (
+            {botConfig.isConnectionActive ? (
               <>
                 <Pause className="w-3.5 h-3.5 fill-current" />
-                <span>Pause Bot</span>
+                <span>Disconnect Alpaca</span>
               </>
             ) : (
               <>
                 <Play className="w-3.5 h-3.5 fill-current" />
-                <span>Start trading</span>
+                <span>Connect Alpaca</span>
+              </>
+            )}
+          </button>
+
+          <button
+            onClick={onToggleBot}
+            disabled={!botConfig.isConnectionActive}
+            className={`flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider px-4 py-2 rounded shadow-sm transition-all duration-150 border cursor-pointer ${
+              !botConfig.isConnectionActive
+                ? "opacity-40 cursor-not-allowed bg-theme-input border-theme-border text-gray-500"
+                : botConfig.isBotRunning
+                ? "bg-amber-600 text-white border-amber-500 hover:bg-amber-700"
+                : "bg-emerald-600 text-white border-emerald-500 hover:bg-emerald-700"
+            }`}
+          >
+            {botConfig.isBotRunning ? (
+              <>
+                <Cpu className="w-3.5 h-3.5 animate-spin" />
+                <span>Pause Swing Bot</span>
+              </>
+            ) : (
+              <>
+                <Cpu className="w-3.5 h-3.5" />
+                <span>Start Swing Bot</span>
               </>
             )}
           </button>

@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import {
   loadStateFromDisk,
@@ -16,6 +17,7 @@ import {
   clearLogs,
   restartCronEngine,
   addLog,
+  getUserAccount,
 } from "./src/server_bot.js";
 
 async function startServer() {
@@ -76,6 +78,29 @@ async function startServer() {
     res.json({ success: true, config: getBotConfig() });
   });
 
+  // API 2.5: Securely save user credentials locally as a backup fallback
+  app.post("/api/save-credentials", (req, res) => {
+    const { userId, ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_BASE_URL } = req.body || {};
+    if (!userId) {
+      return res.status(400).json({ error: "Missing userId parameter" });
+    }
+    try {
+      const filePath = path.resolve(`./private_creds_${userId}.json`);
+      const payload = {
+        ALPACA_API_KEY,
+        ALPACA_SECRET_KEY,
+        ALPACA_BASE_URL: ALPACA_BASE_URL || "https://paper-api.alpaca.markets",
+        updatedAt: new Date().toISOString()
+      };
+      fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), "utf-8");
+      addLog("SUCCESS", `[CONNECTION ENGINE] Secure offline-credentials backup registered for user ${userId}.`);
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("Failed to write offline credentials backup:", err.message);
+      res.status(500).json({ error: "Failed to save backup: " + err.message });
+    }
+  });
+
   // API 3: Get current state metadata
   app.get("/api/state", (req, res) => {
     res.json(getBotState());
@@ -132,6 +157,16 @@ async function startServer() {
   app.post("/api/clear-logs", (req, res) => {
     clearLogs();
     res.json({ success: true });
+  });
+
+  // API 12: Fetch live Alpaca account details for a specific user
+  app.get("/api/account", async (req, res) => {
+    const userId = req.query.userId as string;
+    if (!userId) {
+      return res.status(400).json({ error: "Missing userId parameter" });
+    }
+    const result = await getUserAccount(userId);
+    res.json(result);
   });
 
   // Integrated Vite Dev Middleware Vs Production Client Serve

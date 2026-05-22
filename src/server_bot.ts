@@ -2,10 +2,27 @@ import { GoogleGenAI, Type } from "@google/genai";
 import fs from "fs";
 import path from "path";
 import { BotConfig, StockSetup, ActivePosition, ClosedTrade, BotLog, BotState } from "./types.js";
-import { adminDb } from "./firebase_server.js";
+import { getAdminDb, switchToDefaultDatabase } from "./firebase_server.js";
+
+const getDb = () => getAdminDb();
 
 // Database File Persistence Path
 const DATA_FILE = path.resolve("./trading_state.json");
+
+// Check if a Firestore error is related to a missing custom database or permission denied to trigger fallback to default database
+function isFirestoreDatabaseError(err: any): boolean {
+  if (!err || !err.message) return false;
+  const msg = err.message.toLowerCase();
+  return (
+    msg.includes("5 not_found") ||
+    msg.includes("not-found") ||
+    msg.includes("not_found") ||
+    msg.includes("7 permission_denied") ||
+    msg.includes("permission-denied") ||
+    msg.includes("permission_denied") ||
+    msg.includes("insufficient permissions")
+  );
+}
 
 // Core State Structures
 let botConfig: BotConfig = {
@@ -16,6 +33,7 @@ let botConfig: BotConfig = {
   NEWSAPI_KEY: "",
   isPaper: true,
   isBotRunning: false,
+  isConnectionActive: false,
   scanIntervalMinutes: 5,
 };
 
@@ -56,28 +74,43 @@ export function addLog(level: "INFO" | "SUCCESS" | "WARNING" | "ERROR", message:
 // Ensure database file gets loaded
 export async function loadStateFromDisk() {
   try {
-    if (adminDb && typeof adminDb.collection === "function") {
-      const snap = await adminDb.collection("globalState").doc("trading").get();
-      if (snap.exists) {
-        const parsed = snap.data();
-        if (parsed) {
-          if (parsed.botConfig) botConfig = { ...botConfig, ...parsed.botConfig };
-          if (parsed.activePosition !== undefined) activePosition = parsed.activePosition;
-          if (parsed.closedTrades) closedTrades = parsed.closedTrades;
-          if (parsed.botLogs) botLogs = parsed.botLogs;
-          if (parsed.scannedSetups) scannedSetups = parsed.scannedSetups;
-          if (parsed.botState) botState = { ...botState, ...parsed.botState };
-          console.log("Trading State loaded successfully from FIRESTORE.");
-          
-          // Sync to cache file
-          const d = { botConfig, activePosition, closedTrades, botLogs, scannedSetups, botState };
-          fs.writeFileSync(DATA_FILE, JSON.stringify(d, null, 2), "utf-8");
-          return;
+    const db = getDb();
+    if (db && typeof db.collection === "function") {
+      try {
+        const snap = await db.collection("globalState").doc("trading").get();
+        if (snap.exists) {
+          const parsed = snap.data();
+          if (parsed) {
+            if (parsed.botConfig) botConfig = { ...botConfig, ...parsed.botConfig };
+            if (parsed.activePosition !== undefined) activePosition = parsed.activePosition;
+            if (parsed.closedTrades) closedTrades = parsed.closedTrades;
+            if (parsed.botLogs) botLogs = parsed.botLogs;
+            if (parsed.scannedSetups) scannedSetups = parsed.scannedSetups;
+            if (parsed.botState) botState = { ...botState, ...parsed.botState };
+            console.log("Trading State loaded successfully from FIRESTORE.");
+            
+            // Sync to cache file
+            const d = { botConfig, activePosition, closedTrades, botLogs, scannedSetups, botState };
+            fs.writeFileSync(DATA_FILE, JSON.stringify(d, null, 2), "utf-8");
+            return;
+          }
+        }
+      } catch (err: any) {
+        const errMsg = err?.message || "";
+        if (errMsg.includes("PERMISSION_DENIED") || errMsg.includes("Missing or insufficient permissions")) {
+          console.log("[Firebase Server] Firestore load-backup bypassed due to credentials. Recovering state from local backup instead.");
+        } else {
+          console.warn(`Firestore load error: ${err.message}. Relying on disk backup if available.`);
         }
       }
     }
   } catch (err: any) {
-    console.warn("Failed to load state from Firestore, falling back to disk backup:", err.message);
+    const errMsg = err?.message || "";
+    if (errMsg.includes("PERMISSION_DENIED") || errMsg.includes("Missing or insufficient permissions")) {
+      console.log("[Firebase Server] Firestore load bypassed due to credentials. Recovering state from local backup instead.");
+    } else {
+      console.warn("Failed to load state from Firestore, falling back to disk backup:", err.message);
+    }
   }
 
   try {
@@ -118,16 +151,27 @@ export function saveStateToDisk() {
 
   // Asynchronously back up to Firestore
   try {
-    if (adminDb && typeof adminDb.collection === "function") {
-      adminDb.collection("globalState").doc("trading").set({
+    const db = getDb();
+    if (db && typeof db.collection === "function") {
+      db.collection("globalState").doc("trading").set({
         ...data,
         updatedAt: new Date().toISOString()
-      }, { merge: true }).catch(err => {
-        console.error("Async Firestore save failed:", err.message);
+      }, { merge: true }).catch((err) => {
+        const errMsg = err?.message || "";
+        if (errMsg.includes("PERMISSION_DENIED") || errMsg.includes("Missing or insufficient permissions")) {
+          console.log("[Firebase Server] Firestore synchronized backup paused due to container environment credentials.");
+        } else {
+          console.error("Async Firestore save failed:", err.message);
+        }
       });
     }
   } catch (err: any) {
-    console.error("Failed to sync save to Firestore:", err.message);
+    const errMsg = err?.message || "";
+    if (errMsg.includes("PERMISSION_DENIED") || errMsg.includes("Missing or insufficient permissions")) {
+      console.log("[Firebase Server] Firestore sync bypassed due to container environment credentials.");
+    } else {
+      console.error("Failed to sync save to Firestore:", err.message);
+    }
   }
 }
 
@@ -143,8 +187,9 @@ interface UserCredentials {
 export async function getAllUserCredentials(): Promise<UserCredentials[]> {
   const credentialsList: UserCredentials[] = [];
   try {
-    if (adminDb && typeof adminDb.collectionGroup === "function") {
-      const snap = await adminDb.collectionGroup("credentials").get();
+    const db = getDb();
+    if (db && typeof db.collectionGroup === "function") {
+      const snap = await db.collectionGroup("credentials").get();
       snap.forEach((doc) => {
         const data = doc.data();
         const pathParts = doc.ref.path.split("/");
@@ -161,8 +206,40 @@ export async function getAllUserCredentials(): Promise<UserCredentials[]> {
       });
     }
   } catch (error: any) {
-    console.error("Failed to query user credentials CollectionGroup:", error.message);
+    console.warn("Failed to query user credentials CollectionGroup (this is expected if running unauthenticated locally):", error.message);
   }
+
+  // Robust secure offline fallback: search for local connection credential backups
+  try {
+    if (fs.existsSync(".")) {
+      const files = fs.readdirSync(".");
+      files.forEach((file) => {
+        if (file.startsWith("private_creds_") && file.endsWith(".json")) {
+          try {
+            const userId = file.substring("private_creds_".length, file.length - ".json".length);
+            const content = fs.readFileSync(file, "utf-8");
+            const data = JSON.parse(content);
+            if (userId && data.ALPACA_API_KEY && data.ALPACA_SECRET_KEY) {
+              // Avoid duplicates
+              if (!credentialsList.some(c => c.userId === userId)) {
+                credentialsList.push({
+                  userId,
+                  ALPACA_API_KEY: data.ALPACA_API_KEY,
+                  ALPACA_SECRET_KEY: data.ALPACA_SECRET_KEY,
+                  ALPACA_BASE_URL: data.ALPACA_BASE_URL || "https://paper-api.alpaca.markets",
+                });
+              }
+            }
+          } catch (e: any) {
+            console.error(`Error reading offline credentials fallback file ${file}:`, e.message);
+          }
+        }
+      });
+    }
+  } catch (err: any) {
+    console.warn("Could not read local workspace directories to check credentials file backups:", err.message);
+  }
+
   return credentialsList;
 }
 
@@ -174,7 +251,12 @@ async function alpacaUserFetch(
 ) {
   const apiKey = creds.ALPACA_API_KEY;
   const apiSecret = creds.ALPACA_SECRET_KEY;
-  const baseUrl = creds.ALPACA_BASE_URL.replace(/\/$/, "");
+  let baseUrl = creds.ALPACA_BASE_URL.replace(/\/$/, "");
+  
+  // Safely normalize to prevent double /v2 if the user provides the base URL with /v2
+  if (baseUrl.endsWith("/v2") && endpoint.startsWith("/v2/")) {
+    baseUrl = baseUrl.slice(0, -3);
+  }
   const url = `${baseUrl}${endpoint}`;
 
   const headers = {
@@ -212,6 +294,11 @@ async function alpacaFetch(endpoint: string, options: RequestInit = {}) {
   }
 
   baseUrl = baseUrl.replace(/\/$/, "");
+
+  // Safely normalize to prevent double /v2 if the user provides the base URL with /v2
+  if (baseUrl.endsWith("/v2") && endpoint.startsWith("/v2/")) {
+    baseUrl = baseUrl.slice(0, -3);
+  }
   const url = `${baseUrl}${endpoint}`;
 
   const headers = {
@@ -229,20 +316,144 @@ async function alpacaFetch(endpoint: string, options: RequestInit = {}) {
   return response.json();
 }
 
+// Tracking connection state to prevent error log spamming
+let lastLoggedConnectionErrorMap: Record<string, string> = {};
+
+// Get user account details directly from Alpaca
+export async function getUserAccount(userId: string): Promise<any> {
+  if (!botConfig.isConnectionActive && !botConfig.isBotRunning) {
+    return { status: "bot_paused" };
+  }
+  let creds: any = null;
+
+  // 1. Try local offline credentials backup first
+  const fallbackPath = `./private_creds_${userId}.json`;
+  try {
+    if (fs.existsSync(fallbackPath)) {
+      const raw = fs.readFileSync(fallbackPath, "utf-8");
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.ALPACA_API_KEY && parsed.ALPACA_SECRET_KEY) {
+        creds = {
+          ALPACA_API_KEY: parsed.ALPACA_API_KEY,
+          ALPACA_SECRET_KEY: parsed.ALPACA_SECRET_KEY,
+          ALPACA_BASE_URL: parsed.ALPACA_BASE_URL || "https://paper-api.alpaca.markets",
+        };
+      }
+    }
+  } catch (err: any) {
+    console.warn(`Could not read fallback local credentials file for ${userId}: ${err.message}`);
+  }
+
+  // 2. Fetch from Firestore if no local credentials found
+  if (!creds) {
+    try {
+      const db = getDb();
+      if (db && typeof db.collection === "function") {
+        const docRef = db.collection("users").doc(userId).collection("private").doc("credentials");
+        const snap = await docRef.get();
+        if (snap.exists) {
+          const data = snap.data();
+          if (data && data.ALPACA_API_KEY && data.ALPACA_SECRET_KEY) {
+            creds = {
+              ALPACA_API_KEY: data.ALPACA_API_KEY,
+              ALPACA_SECRET_KEY: data.ALPACA_SECRET_KEY,
+              ALPACA_BASE_URL: data.ALPACA_BASE_URL || "https://paper-api.alpaca.markets",
+            };
+            
+            // Backup locally for future offline robustness
+            try {
+              fs.writeFileSync(fallbackPath, JSON.stringify(creds, null, 2), "utf-8");
+            } catch (backupErr) {
+              // Ignore writing backup failures
+            }
+          }
+        }
+      }
+    } catch (err: any) {
+      const errMsg = err?.message || "";
+      if (errMsg.includes("PERMISSION_DENIED") || errMsg.includes("Missing or insufficient permissions")) {
+        // Quiet fallback to master configurations
+        console.log(`[Firebase Server] Firestore connection credentials query for ${userId} bypassed due to environment credentials.`);
+      } else {
+        console.warn(`Could not load user-specific credentials for ${userId} from Firestore: ${err.message}. Checking master config fallback...`);
+      }
+    }
+  }
+
+  // Fall back to master bot configuration keys if user-specific keys are missing
+  if (!creds && botConfig.ALPACA_API_KEY && botConfig.ALPACA_SECRET_KEY) {
+    console.log(`Using master Alpaca credentials fallback for user account query: ${userId}`);
+    creds = {
+      ALPACA_API_KEY: botConfig.ALPACA_API_KEY,
+      ALPACA_SECRET_KEY: botConfig.ALPACA_SECRET_KEY,
+      ALPACA_BASE_URL: botConfig.ALPACA_BASE_URL || "https://paper-api.alpaca.markets",
+    };
+  }
+
+  if (creds) {
+    try {
+      const account = await alpacaUserFetch(creds, "/v2/account");
+      
+      // If we previously had a logged connection error, announce recovery
+      if (lastLoggedConnectionErrorMap[userId]) {
+        addLog("SUCCESS", `[CONNECTION ENGINE] Alpaca API Connection successfully restored for account ${userId}.`);
+        delete lastLoggedConnectionErrorMap[userId];
+      }
+
+      return {
+        status: "connected",
+        account_number: account.account_number,
+        currency: account.currency,
+        cash: parseFloat(account.cash),
+        portfolio_value: parseFloat(account.portfolio_value),
+        equity: parseFloat(account.equity),
+        long_market_value: parseFloat(account.long_market_value),
+        buying_power: parseFloat(account.buying_power),
+        trading_blocked: account.trading_blocked,
+        isPaper: creds.ALPACA_BASE_URL.includes("paper"),
+      };
+    } catch (err: any) {
+      console.warn(`Could not load Alpaca account details from Alpaca API for user ${userId}: ${err.message}`);
+      
+      const errString = err.message || "Unknown error";
+      if (lastLoggedConnectionErrorMap[userId] !== errString) {
+        lastLoggedConnectionErrorMap[userId] = errString;
+        addLog("ERROR", `[CONNECTION ENGINE] Alpaca connection failure for user ${userId}: ${errString}`);
+      }
+
+      return { status: "error", error: err.message };
+    }
+  }
+
+  return { status: "unconfigured" };
+}
+
 // Fetch historical bars using user's keys from Alpaca Data API
 // Free paper keys have access to IEX data, standard live keys to SIP. Let's use the appropriate endpoint.
 async function fetchAlpacaBars(symbol: string, limitDays: number = 300): Promise<any[]> {
   try {
     // Alpaca historical bars can be queried at: https://data.alpaca.markets/v2/stocks/bars
-    const apiKey = botConfig.ALPACA_API_KEY;
-    const apiSecret = botConfig.ALPACA_SECRET_KEY;
+    let apiKey = botConfig.ALPACA_API_KEY;
+    let apiSecret = botConfig.ALPACA_SECRET_KEY;
+    let isPaper = botConfig.isPaper;
+
+    // Use fallback to first registered copy portfolio user if master keys are empty
+    if (!apiKey || !apiSecret) {
+      const users = await getAllUserCredentials();
+      if (users.length > 0) {
+        apiKey = users[0].ALPACA_API_KEY;
+        apiSecret = users[0].ALPACA_SECRET_KEY;
+        isPaper = (users[0].ALPACA_BASE_URL || "").includes("paper");
+      }
+    }
+
     if (!apiKey || !apiSecret) {
       throw new Error("Missing credentials for market data endpoint.");
     }
 
     const startStr = new Date(Date.now() - limitDays * 24 * 60 * 60 * 1000).toISOString();
     const timeframe = "1Day";
-    const feed = botConfig.isPaper ? "iex" : "sip"; // Use standard feeds
+    const feed = isPaper ? "iex" : "sip"; // Use standard feeds
 
     const url = `https://data.alpaca.markets/v2/stocks/bars?symbols=${symbol}&timeframe=${timeframe}&start=${startStr}&limit=${limitDays}&feed=${feed}&adjustment=all`;
 
@@ -337,6 +548,50 @@ function calculateRSI(bars: any[], period: number = 14): number {
   if (avgLoss === 0) return 100;
   const rs = avgGain / avgLoss;
   return 100 - 100 / (1 + rs);
+}
+
+// Fair Value Gap (FVG) Detector
+// A Bullish FVG occurs when the low of candle 3 is greater than the high of candle 1 (imbalance gap up).
+// A Bearish FVG occurs when the high of candle 3 is less than the low of candle 1 (imbalance gap down).
+function detectFairValueGaps(bars: any[]): { hasBullishFVG: boolean; bullishFVGPrice: number; hasBearishFVG: boolean; bearishFVGPrice: number } {
+  if (bars.length < 3) {
+    return { hasBullishFVG: false, bullishFVGPrice: 0, hasBearishFVG: false, bearishFVGPrice: 0 };
+  }
+
+  // Look for any recent bullish/bearish gaps in the last 3 days
+  const b1 = bars[bars.length - 3];
+  const b2 = bars[bars.length - 2];
+  const b3 = bars[bars.length - 1];
+
+  const hasBullish = b3.l > b1.h;
+  const bullishPrice = hasBullish ? (b1.h + b3.l) / 2 : 0;
+
+  const hasBearish = b1.l > b3.h;
+  const bearishPrice = hasBearish ? (b1.l + b3.h) / 2 : 0;
+
+  return {
+    hasBullishFVG: hasBullish,
+    bullishFVGPrice: Math.round(bullishPrice * 100) / 100,
+    hasBearishFVG: hasBearish,
+    bearishFVGPrice: Math.round(bearishPrice * 100) / 100,
+  };
+}
+
+// Supply and Demand Zones calculation
+// Supply zone represents resistance (highest high over recent 30 trading sessions).
+// Demand zone represents support (lowest low over recent 30 trading sessions).
+function calculateSupplyDemandZones(bars: any[]): { supplyZone: number; demandZone: number } {
+  if (bars.length < 30) {
+    return { supplyZone: 0, demandZone: 0 };
+  }
+  const recent30 = bars.slice(-30);
+  const highestHigh = Math.max(...recent30.map(b => b.h));
+  const lowestLow = Math.min(...recent30.map(b => b.l));
+  
+  return {
+    supplyZone: Math.round(highestHigh * 100) / 100,
+    demandZone: Math.round(lowestLow * 100) / 100,
+  };
 }
 
 // Get fundamental properties via rule-checks
@@ -526,7 +781,13 @@ export async function scanForSetups() {
           continue;
         }
 
-        // Filter Rule: RSI(14) dipped below 40 in past 10 days, bouncing back above 40
+        // Filter Rule: High Volume check - must have at least 500,000 shares avg daily volume
+        const avgVol20 = calculateAverageVolume(bars, 20);
+        if (avgVol20 < 500000) {
+          continue;
+        }
+
+        // Filter Rule: RSI, Fair Value Gaps (FVG) and Supply/Demand entry triggers
         const rsiHistory = [];
         for (let j = 10; j >= 0; j--) {
           const subBars = bars.slice(0, bars.length - j);
@@ -537,8 +798,26 @@ export async function scanForSetups() {
         const historicalDipped = rsiHistory.slice(0, -1).some(r => r < 40);
         const bouncedAbove = currentRSI >= 40;
 
-        if (!historicalDipped || !bouncedAbove) {
-          // If no RSI dip-bounce found, filter it out
+        // Custom high-probability setups from user rules
+        const rsiRecovery = historicalDipped && bouncedAbove;
+        const fvgResult = detectFairValueGaps(bars);
+        const sdZones = calculateSupplyDemandZones(bars);
+
+        const priceNearDemand = currentPrice <= (sdZones.demandZone * 1.05); // Price is within 5% of support / demand zone
+        const rsiOversold = currentRSI <= 38;
+
+        // We require at least ONE dynamic entry confirmation:
+        // - Classic RSI pullback recovery bounce
+        // - An active Bullish Fair Value Gap (momentum trigger)
+        // - Testing down into the major Demand Zone (oversold structure)
+        const entriesTriggered: string[] = [];
+        if (rsiRecovery) entriesTriggered.push("RSI Recovery");
+        if (fvgResult.hasBullishFVG) entriesTriggered.push(`Bullish FVG at $${fvgResult.bullishFVGPrice}`);
+        if (priceNearDemand) entriesTriggered.push(`Demand Zone Support at $${sdZones.demandZone}`);
+        if (rsiOversold) entriesTriggered.push(`RSI Oversold (${Math.round(currentRSI)})`);
+
+        if (entriesTriggered.length === 0) {
+          // No high probability entry signals found
           continue;
         }
 
@@ -552,7 +831,6 @@ export async function scanForSetups() {
         }
 
         // Filter Rule: Entry Bar volume
-        const avgVol20 = calculateAverageVolume(bars, 20);
         const entryVolumeRatio = currentVol / avgVol20;
         const minVolRatio = botState.marketRegime === "STRICT_VOLUME" ? 2.0 : 1.25;
 
@@ -574,15 +852,12 @@ export async function scanForSetups() {
           continue;
         }
 
-        // Exit parameters calculator
-        // Support = recent swing low or 200 SMA (let's find lowest price of past 20 bars)
-        const recentBars = bars.slice(-20);
-        const localLow = Math.min(...recentBars.map(b => b.l));
-        const supportLevel = Math.max(localLow, sma200);
+        // Exit parameters calculator mapped directly to supply & demand zones
+        // Support / stop-loss: demandZone or sma200, whichever is closer to protect capital
+        const supportLevel = Math.max(sdZones.demandZone, sma200 * 0.98);
 
-        // Target / resistance price = recent swing high (highest of past 40 bars)
-        const highBars = bars.slice(-40);
-        const targetPrice = Math.max(...highBars.map(b => b.h));
+        // Resistance / target exit: supplyZone (the major 30-day resistance peak)
+        const targetPrice = sdZones.supplyZone;
 
         // Relative Strength vs SPY (falling less than spy over past 10 bars)
         const stockReturn10 = (currentPrice - bars[bars.length - 11].c) / bars[bars.length - 11].c;
@@ -603,7 +878,7 @@ export async function scanForSetups() {
           debtToEquity: fun.debtToEquity,
           fcfPositive: fun.fcfPositive,
           marketCapBillion: fun.marketCapBillion,
-          reason: "Completed S&P 500 / Nasdaq 100 pullback ruleset with RSI oversold bounce and high daily momentum volume.",
+          reason: `High volume checks verified. Buy trigger details: ${entriesTriggered.join(" & ")}.`,
           volumeTrendRatio: Math.round(volumeTrendRatio * 100) / 100,
           entryVolumeRatio: Math.round(entryVolumeRatio * 100) / 100,
           supportLevel: Math.round(supportLevel * 100) / 100,
@@ -614,6 +889,12 @@ export async function scanForSetups() {
           catalystEvent: "Dynamic event window",
           catalystDate: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
           relativeStrengthRatio: Math.round(relativeStrengthRatio * 10000) / 10000,
+          hasBullishFVG: fvgResult.hasBullishFVG,
+          bullishFVGPrice: fvgResult.bullishFVGPrice,
+          supplyZone: sdZones.supplyZone,
+          demandZone: sdZones.demandZone,
+          avgVolume20d: Math.round(avgVol20),
+          rsiStatus: currentRSI < 35 ? "OVERSOLD" : currentRSI > 70 ? "OVERBOUGHT" : "NEUTRAL"
         });
 
       } catch (tickerErr: any) {
@@ -647,13 +928,73 @@ export async function scanForSetups() {
   }
 }
 
-// News agent sentry powered by Gemini with Search Grounding
+// Fetch recent news articles from Alpaca News API using standard API credentials
+async function fetchAlpacaNews(symbol: string): Promise<any[]> {
+  let apiKey = botConfig.ALPACA_API_KEY;
+  let apiSecret = botConfig.ALPACA_SECRET_KEY;
+
+  if (!apiKey || !apiSecret) {
+    const users = await getAllUserCredentials();
+    if (users.length > 0) {
+      apiKey = users[0].ALPACA_API_KEY;
+      apiSecret = users[0].ALPACA_SECRET_KEY;
+    }
+  }
+
+  if (!apiKey || !apiSecret) {
+    console.warn(`[NEWS ENGINE] Missing credentials, unable to fetch Alpaca news for ${symbol}.`);
+    return [];
+  }
+
+  try {
+    const url = `https://data.alpaca.markets/v1beta1/news?symbols=${symbol}&limit=5`;
+    const headers = {
+      "APCA-API-KEY-ID": apiKey,
+      "APCA-API-SECRET-KEY": apiSecret,
+      "Accept": "application/json",
+    };
+    const response = await fetch(url, { headers });
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Alpaca News HTTP error (${response.status}): ${errText}`);
+    }
+    const data = await response.json();
+    return data.news || [];
+  } catch (err: any) {
+    console.error(`[NEWS ENGINE] Failed to fetch news from Alpaca for ${symbol}:`, err.message);
+    return [];
+  }
+}
+
+// News agent sentry powered by Gemini with Search Grounding & real Alpaca News API Feed
 async function runGeminiSentimentAgent(setup: StockSetup): Promise<StockSetup> {
   const geminiKey = botConfig.GEMINI_API_KEY;
   if (!geminiKey) {
     setup.sentimentScore = 0.5;
     setup.sentimentReason = "Gemini API key is not supplied. Standard positive ranking fallback.";
     return setup;
+  }
+
+  let alpacaNewsText = "No direct recent Alpaca news found.";
+  try {
+    const articles = await fetchAlpacaNews(setup.symbol);
+    if (articles && articles.length > 0) {
+      alpacaNewsText = articles
+        .map((art: any, idx: number) => {
+          return `Article #${idx + 1}:
+  Headline: ${art.headline || "N/A"}
+  Source: ${art.source || "N/A"}
+  Summary: ${art.summary || "N/A"}
+  URL: ${art.url || "N/A"}`;
+        })
+        .join("\n\n");
+      const cleanHeadlineSummary = articles.map(art => art.headline).slice(0, 3).join(" | ");
+      addLog("INFO", `[NEWS ENGINE] Compiled Alpaca news v1beta1 data feed for ${setup.symbol}: "${cleanHeadlineSummary.slice(0, 80)}..."`);
+    } else {
+      addLog("INFO", `[NEWS ENGINE] No recent news pieces returned from Alpaca News API for ${setup.symbol}. Fallback to internet grounding search.`);
+    }
+  } catch (newsErr: any) {
+    addLog("WARNING", `[NEWS ENGINE] Skipping direct Alpaca news fetch for ${setup.symbol} due to credentials limits: ${newsErr.message}`);
   }
 
   try {
@@ -663,7 +1004,13 @@ async function runGeminiSentimentAgent(setup: StockSetup): Promise<StockSetup> {
     });
 
     const prompt = `Conduct a news sentiment and risk scan for the stock ${setup.symbol} (${setup.companyName}).
-    Analyze recent news headlines, press releases, other web results.
+    
+    Here is the live recent news feed pulled directly from the Alpaca News API (v1beta1):
+    === START ALPACA DATA FEED ===
+    ${alpacaNewsText}
+    === END ALPACA DATA FEED ===
+
+    Synthesize this real-time news feed combined with broad web research.
     Look very carefully for any hard blocks:
     1. SEC/DOJ investigations or regulatory filings
     2. CEO/CFO sudden departures or executive instability
@@ -840,6 +1187,12 @@ export async function deployPortfolio(symbol: string): Promise<boolean> {
       earningsDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0], // Estimated default
       status: "NORMAL",
       enteredAt: new Date().toISOString(),
+      hasBullishFVG: proposal.hasBullishFVG,
+      bullishFVGPrice: proposal.bullishFVGPrice,
+      supplyZone: proposal.supplyZone,
+      demandZone: proposal.demandZone,
+      avgVolume20d: proposal.avgVolume20d,
+      rsiStatus: proposal.rsiStatus,
     };
 
     // Use Gemini with Search Grounding to find precise company earnings date to schedule the exit!
@@ -1174,7 +1527,9 @@ function getCompanyName(ticker: string): string {
 
 // 24/7 Background Cron Engine Setup
 let backgroundIntervalId: NodeJS.Timeout | null = null;
+let scheduledCheckIntervalId: NodeJS.Timeout | null = null;
 let wasMarketOpenLastKnown = true;
+let lastScheduledScanKey = "";
 
 export function isMarketOrPremarketOpen(date: Date = new Date()): boolean {
   try {
@@ -1202,14 +1557,58 @@ export function isMarketOrPremarketOpen(date: Date = new Date()): boolean {
   }
 }
 
+export function checkAndTriggerScheduledScans() {
+  if (!botConfig.isBotRunning) return;
+  try {
+    const now = new Date();
+    const nyString = now.toLocaleString("en-US", { timeZone: "America/New_York" });
+    const nyDate = new Date(nyString);
+    
+    const day = nyDate.getDay();
+    if (day === 0 || day === 6) return; // Skip weekends
+    
+    const hours = nyDate.getHours();
+    const minutes = nyDate.getMinutes();
+    
+    // Target times: 9:30 AM, 11:00 AM, 1:00 PM, 4:00 PM Eastern Time
+    const targets = [
+      { h: 9, m: 30, label: "09:30 AM" },
+      { h: 11, m: 0, label: "11:00 AM" },
+      { h: 13, m: 0, label: "01:00 PM" },
+      { h: 16, m: 0, label: "04:00 PM" }
+    ];
+    
+    const match = targets.find((t) => t.h === hours && t.m === minutes);
+    if (match) {
+      const year = nyDate.getFullYear();
+      const month = String(nyDate.getMonth() + 1).padStart(2, "0");
+      const dateStr = String(nyDate.getDate()).padStart(2, "0");
+      const currentKey = `${year}-${month}-${dateStr} ${hours}:${minutes}`;
+      
+      if (lastScheduledScanKey !== currentKey) {
+        lastScheduledScanKey = currentKey;
+        addLog("SUCCESS", `[SCHEDULED ENGINE] Running periodically scheduled swing trade scan at ${match.label} ET.`);
+        scanForSetups();
+      }
+    }
+  } catch (err: any) {
+    console.error("Scheduled scan check encountered error:", err.message);
+  }
+}
+
 export function restartCronEngine() {
   if (backgroundIntervalId) {
     clearInterval(backgroundIntervalId);
     backgroundIntervalId = null;
   }
+  if (scheduledCheckIntervalId) {
+    clearInterval(scheduledCheckIntervalId);
+    scheduledCheckIntervalId = null;
+  }
 
   if (botConfig.isBotRunning) {
     addLog("SUCCESS", `Bot State: ACTIVE. Scheduling evaluation loops every ${botConfig.scanIntervalMinutes} minutes.`);
+    addLog("INFO", "Schedules activated for daily scans at 9:30 AM, 11:00 AM, 1:00 PM, and 4:00 PM Eastern Time for premium swing trades.");
     botState.isActive = true;
 
     // Run first scan immediately
@@ -1220,8 +1619,13 @@ export function restartCronEngine() {
     backgroundIntervalId = setInterval(() => {
       runContinuousBotCycle();
     }, botConfig.scanIntervalMinutes * 60 * 1000);
+
+    // Precise schedule checker running every 30 seconds to catch exact minutes
+    scheduledCheckIntervalId = setInterval(() => {
+      checkAndTriggerScheduledScans();
+    }, 30 * 1000);
   } else {
-    addLog("WARNING", "Bot State: PAUSED. Continuous evaluation cycles disabled.");
+    addLog("WARNING", "Bot State: PAUSED. Continuous evaluation cycles & daily schedules disabled.");
     botState.isActive = false;
     botState.nextScanTime = null;
   }
@@ -1275,8 +1679,29 @@ async function runContinuousBotCycle() {
 // API Endpoints Getters & Setters
 export function getBotConfig() { return botConfig; }
 export function updateBotConfig(newConfig: Partial<BotConfig>) {
+  const oldConnection = botConfig.isConnectionActive;
+  const oldRunning = botConfig.isBotRunning;
+
   botConfig = { ...botConfig, ...newConfig };
-  addLog("INFO", `Configuration updated on server. Running on ${botConfig.isPaper ? "PAPER" : "LIVE"} credentials.`);
+
+  if (newConfig.isConnectionActive !== undefined && oldConnection !== botConfig.isConnectionActive) {
+    if (botConfig.isConnectionActive) {
+      addLog("SUCCESS", "[CONNECTION ENGINE] Alpaca REST & Data integration channels connected.");
+    } else {
+      addLog("WARNING", "[CONNECTION ENGINE] Alpaca integration disconnected. Bot on standby.");
+    }
+  }
+
+  if (newConfig.isBotRunning !== undefined && oldRunning !== botConfig.isBotRunning) {
+    if (botConfig.isBotRunning) {
+      addLog("SUCCESS", "[TRADING ENGINE] Autonomous swing trading scheduler activated.");
+    } else {
+      addLog("WARNING", "[TRADING ENGINE] Autonomous swing trading scheduler paused.");
+    }
+  } else if (newConfig.isConnectionActive === undefined && newConfig.isBotRunning === undefined) {
+    addLog("INFO", `Configuration updated on server. Running on ${botConfig.isPaper ? "PAPER" : "LIVE"} credentials.`);
+  }
+
   saveStateToDisk();
 }
 export function getActivePosition() { return activePosition; }

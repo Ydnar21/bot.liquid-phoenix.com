@@ -76,9 +76,32 @@ export default function ScreenerPanel({
                     </div>
                     <div>
                       <h4 className="text-xs font-bold text-white uppercase tracking-tight font-sans">{setup.companyName}</h4>
-                      <p className="text-[10px] text-gray-500 font-mono">
-                        RSI(14): <span className="text-theme-accent font-bold">{setup.rsi}</span> | Price: ${setup.price.toFixed(2)} | RS VS SPY: {setup.relativeStrengthRatio > 0 ? "+" : ""}{(setup.relativeStrengthRatio * 100).toFixed(2)}%
+                      <p className="text-[10px] text-gray-400 font-mono">
+                        Price: <span className="text-white font-bold">${setup.price.toFixed(2)}</span> | RS VS SPY: {setup.relativeStrengthRatio > 0 ? "+" : ""}{(setup.relativeStrengthRatio * 100).toFixed(2)}%
                       </p>
+                      
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded font-mono font-bold border ${
+                          setup.rsiStatus === "OVERSOLD" 
+                            ? "bg-rose-500/10 border-rose-500/20 text-rose-400"
+                            : setup.rsiStatus === "OVERBOUGHT"
+                            ? "bg-amber-500/10 border-amber-500/20 text-amber-400"
+                            : "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+                        }`}>
+                          RSI: {setup.rsi} ({setup.rsiStatus || "NEUTRAL"})
+                        </span>
+                        {setup.hasBullishFVG && (
+                          <span className="text-[9px] bg-sky-500/10 border border-sky-500/25 text-sky-400 px-1.5 py-0.5 rounded font-mono font-bold animate-pulse">
+                            Bullish FVG: ${setup.bullishFVGPrice}
+                          </span>
+                        )}
+                        <span className="text-[9px] bg-slate-500/15 border border-theme-border text-slate-300 px-1.5 py-0.5 rounded font-mono">
+                          Demand: ${setup.demandZone} &bull; Supply: ${setup.supplyZone}
+                        </span>
+                        <span className="text-[9px] bg-purple-500/10 border border-purple-500/20 text-purple-400 px-1.5 py-0.5 rounded font-mono font-bold">
+                          Vol: {(setup.avgVolume20d ? setup.avgVolume20d / 1000000 : 0).toFixed(1)}M avg/day
+                        </span>
+                      </div>
                     </div>
                   </div>
 

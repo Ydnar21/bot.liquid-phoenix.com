@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Key, ShieldCheck, Database, HelpCircle, Save, Settings as SettingsIcon } from "lucide-react";
 import { BotConfig } from "../types";
-import { db } from "../firebase";
+import { db, switchToDefaultClientDb } from "../firebase";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 
 interface SettingsProps {
@@ -35,6 +35,21 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
         }
       } catch (err: any) {
         console.error("Failed to load user credentials from Firestore:", err.message);
+        if (err.message && (err.message.toLowerCase().includes("not-found") || err.message.toLowerCase().includes("database") || err.message.toLowerCase().includes("not_found"))) {
+          try {
+            switchToDefaultClientDb();
+            const credRef = doc(db, "users", currentUser.uid, "private", "credentials");
+            const snap = await getDoc(credRef);
+            if (snap.exists() && active) {
+              const data = snap.data();
+              setApiKey(data.ALPACA_API_KEY || "");
+              setApiSecret(data.ALPACA_SECRET_KEY || "");
+              setBaseUrl(data.ALPACA_BASE_URL || "https://paper-api.alpaca.markets");
+            }
+          } catch (retryErr: any) {
+            console.error("Fallback load user credentials from Firestore also failed:", retryErr.message);
+          }
+        }
       } finally {
         if (active) setLoading(false);
       }
@@ -57,14 +72,45 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
 
     try {
       if (currentUser) {
-        // Securely sync private keys directly to Firestore
-        const credRef = doc(db, "users", currentUser.uid, "private", "credentials");
-        await setDoc(credRef, {
-          ALPACA_API_KEY: apiKey,
-          ALPACA_SECRET_KEY: apiSecret,
-          ALPACA_BASE_URL: baseUrl,
-          updatedAt: new Date().toISOString(),
-        });
+        try {
+          // Securely sync private keys directly to Firestore
+          const credRef = doc(db, "users", currentUser.uid, "private", "credentials");
+          await setDoc(credRef, {
+            ALPACA_API_KEY: apiKey,
+            ALPACA_SECRET_KEY: apiSecret,
+            ALPACA_BASE_URL: baseUrl,
+            updatedAt: new Date().toISOString(),
+          });
+        } catch (e: any) {
+          if (e.message && (e.message.toLowerCase().includes("not-found") || e.message.toLowerCase().includes("database") || e.message.toLowerCase().includes("not_found"))) {
+            switchToDefaultClientDb();
+            const credRef = doc(db, "users", currentUser.uid, "private", "credentials");
+            await setDoc(credRef, {
+              ALPACA_API_KEY: apiKey,
+              ALPACA_SECRET_KEY: apiSecret,
+              ALPACA_BASE_URL: baseUrl,
+              updatedAt: new Date().toISOString(),
+            });
+          } else {
+            throw e;
+          }
+        }
+
+        // Sync secure localized backup fallback to server
+        try {
+          await fetch("/api/save-credentials", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              userId: currentUser.uid,
+              ALPACA_API_KEY: apiKey,
+              ALPACA_SECRET_KEY: apiSecret,
+              ALPACA_BASE_URL: baseUrl,
+            }),
+          });
+        } catch (errFallback) {
+          console.warn("Secure local fallback registration error:", errFallback);
+        }
       }
 
       // Sync global news configuration updates
@@ -141,17 +187,19 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
           </div>
 
           {/* Optional News API Key */}
-          <div className="space-y-1.5">
-            <label className="text-[10px] text-gray-400 block uppercase font-mono tracking-wider flex items-center gap-1.5">
-              <Key className="w-3 h-3 text-gray-500" /> NewsAPI Key (Optional)
+          <div className="space-y-1.5 opacity-80 pt-2 border-t border-theme-border/20">
+            <label className="text-[10px] text-gray-400 block uppercase font-mono tracking-wider flex items-center gap-1.5 font-bold">
+              <Key className="w-3 h-3 text-emerald-400" /> Alpaca News Data Integration
             </label>
             <input
               type="text"
-              value={newsKey}
-              onChange={(e) => setNewsKey(e.target.value)}
-              placeholder="Headline sentiment verification"
-              className="w-full bg-theme-input border border-theme-border rounded px-3 py-1.5 text-xs text-theme-accent font-mono focus:outline-none focus:border-theme-accent"
+              readOnly
+              value="ACTIVE (Powered by Alpaca Keys)"
+              className="w-full bg-emerald-950/20 border border-emerald-500/30 rounded px-3 py-1.5 text-xs text-emerald-400 font-mono focus:outline-none"
             />
+            <p className="text-[9px] text-gray-500 leading-tight">
+              News sentiment runs automatically from <code className="text-gray-400">alpaca.markets/v1beta1/news</code> using the key ID and secret key provided above.
+            </p>
           </div>
 
           <button

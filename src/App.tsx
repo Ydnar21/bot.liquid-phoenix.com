@@ -7,7 +7,7 @@ import ActivePositionPanel from "./components/ActivePositionPanel";
 import ScreenerPanel from "./components/ScreenerPanel";
 import LogsConsole from "./components/LogsConsole";
 import PerformanceHistory from "./components/PerformanceHistory";
-import { auth, googleProvider, signInWithPopup, signOut, db } from "./firebase";
+import { auth, googleProvider, signInWithPopup, signOut, db, switchToDefaultClientDb } from "./firebase";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { doc, setDoc } from "firebase/firestore";
 
@@ -29,6 +29,7 @@ export default function App() {
     NEWSAPI_KEY: "",
     isPaper: true,
     isBotRunning: false,
+    isConnectionActive: false,
     scanIntervalMinutes: 5,
   });
 
@@ -47,6 +48,7 @@ export default function App() {
   const [history, setHistory] = useState<ClosedTrade[]>([]);
   const [setups, setSetups] = useState<StockSetup[]>([]);
   const [logs, setLogs] = useState<BotLog[]>([]);
+  const [alpacaAccount, setAlpacaAccount] = useState<any>(null);
 
   const [isScanning, setIsScanning] = useState(false);
   const [isDeploying, setIsDeploying] = useState(false);
@@ -81,6 +83,22 @@ export default function App() {
           }, { merge: true });
         } catch (e: any) {
           console.error("Firestore user profile sync error:", e.message);
+          if (e.message && (e.message.toLowerCase().includes("not-found") || e.message.toLowerCase().includes("database") || e.message.toLowerCase().includes("not_found"))) {
+            try {
+              switchToDefaultClientDb();
+              const userRef = doc(db, "users", u.uid);
+              await setDoc(userRef, {
+                uid: u.uid,
+                email: u.email || "",
+                displayName: u.displayName || "Anonymous",
+                photoURL: u.photoURL || "",
+                lastLogin: new Date().toISOString()
+              }, { merge: true });
+              console.log("Successfully synced user profile to default database fallback");
+            } catch (retryError: any) {
+              console.error("Firestore user profile sync fallback error:", retryError.message);
+            }
+          }
         }
       } else {
         setUser(null);
@@ -90,17 +108,46 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  const safeFetchJson = async <T,>(url: string, currentVal: T): Promise<T> => {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        return currentVal;
+      }
+      const contentType = res.headers.get("content-type");
+      if (!contentType || !contentType.toLowerCase().includes("application/json")) {
+        return currentVal;
+      }
+      const data = await res.json();
+      return data as T;
+    } catch (err: any) {
+      const errMsg = (err instanceof Error ? err.message : String(err)) || "";
+      const lowerMsg = errMsg.toLowerCase();
+      if (
+        lowerMsg.includes("load failed") ||
+        lowerMsg.includes("the string did not match the expected pattern") ||
+        lowerMsg.includes("aborted") ||
+        lowerMsg.includes("failed to fetch")
+      ) {
+        return currentVal;
+      }
+      console.warn(`Safe fetch failure for ${url}:`, errMsg);
+      return currentVal;
+    }
+  };
+
   // API Call Fetchers
   const fetchAllStates = async () => {
     if (!auth.currentUser) return; // Secure state fetch guard
     try {
-      const [configRes, stateRes, posRes, histRes, setupsRes, logsRes] = await Promise.all([
-        fetch("/api/config").then((r) => r.json()),
-        fetch("/api/state").then((r) => r.json()),
-        fetch("/api/position").then((r) => r.json().catch(() => null)),
-        fetch("/api/history").then((r) => r.json()),
-        fetch("/api/setups").then((r) => r.json()),
-        fetch("/api/logs").then((r) => r.json()),
+      const [configRes, stateRes, posRes, histRes, setupsRes, logsRes, accountRes] = await Promise.all([
+        safeFetchJson<BotConfig>("/api/config", config),
+        safeFetchJson<BotState>("/api/state", botState),
+        safeFetchJson<ActivePosition | null>("/api/position", position),
+        safeFetchJson<ClosedTrade[]>("/api/history", history),
+        safeFetchJson<StockSetup[]>("/api/setups", setups),
+        safeFetchJson<BotLog[]>("/api/logs", logs),
+        safeFetchJson<any>(`/api/account?userId=${auth.currentUser.uid}`, alpacaAccount || { status: "unconfigured" }),
       ]);
 
       setConfig(configRes);
@@ -109,8 +156,21 @@ export default function App() {
       setHistory(histRes);
       setSetups(setupsRes);
       setLogs(logsRes);
+      setAlpacaAccount(accountRes);
     } catch (err: any) {
-      console.error("Dashboard failed background state sync:", err.message);
+      const errMsg = (err instanceof Error ? err.message : String(err)) || "";
+      const lowerMsg = errMsg.toLowerCase();
+      if (
+        lowerMsg.includes("load failed") ||
+        lowerMsg.includes("the string did not match the expected pattern") ||
+        lowerMsg.includes("failed to fetch") ||
+        lowerMsg.includes("aborted")
+      ) {
+        // Gracefully ignore or log as warning transient network states during hot-reloads / restarts
+        console.warn("Cabinet background sync paused: expected network reload event.");
+      } else {
+        console.error("Dashboard failed background state sync:", errMsg);
+      }
     }
   };
 
@@ -157,6 +217,28 @@ export default function App() {
       if (data.success) {
         triggerBanner(
           nextRunningStatus ? "Autonomous swing trading bot active and scheduled!" : "Bot activity paused.",
+          "success"
+        );
+        fetchAllStates();
+      }
+    } catch (err: any) {
+      triggerBanner(`Failed: ${err.message}`, "error");
+    }
+  };
+
+  const handleToggleConnection = async () => {
+    const nextConnectionStatus = !config.isConnectionActive;
+
+    try {
+      const res = await fetch("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isConnectionActive: nextConnectionStatus }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        triggerBanner(
+          nextConnectionStatus ? "Alpaca API Connection online! Dashboard updated." : "Alpaca integration disconnected.",
           "success"
         );
         fetchAllStates();
@@ -503,10 +585,12 @@ export default function App() {
         botState={botState}
         botConfig={config}
         onToggleBot={handleToggleBot}
+        onToggleConnection={handleToggleConnection}
         onTriggerScan={handleTriggerScan}
         isScanning={isScanning}
         currentUser={user}
         onSignOut={() => signOut(auth)}
+        alpacaAccount={alpacaAccount}
       />
 
       {/* Dynamic Floating Toast Alerts */}
@@ -557,22 +641,71 @@ export default function App() {
 
           {/* Active Positions & Screener proposals workspace */}
           <div className="lg:col-span-2 space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
-              <div className="md:col-span-2">
-                <ActivePositionPanel
-                  position={position}
-                  onExitPosition={handleExitPosition}
-                  isExiting={isExiting}
-                />
-              </div>
-            </div>
+            {!config.isConnectionActive ? (
+              <div className="bg-theme-panel border border-theme-border rounded p-8 text-center flex flex-col items-center justify-center min-h-[400px] gap-4 relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-full h-[2px] bg-amber-500/50" />
+                
+                {/* Visual Standby Indicator */}
+                <div className="relative flex items-center justify-center">
+                  <div className="absolute w-12 h-12 bg-amber-500/10 rounded-full animate-ping" />
+                  <div className="w-12 h-12 bg-theme-input border border-amber-500/30 rounded-full flex items-center justify-center text-amber-500 font-bold font-mono">
+                    💤
+                  </div>
+                </div>
 
-            <ScreenerPanel
-              setups={setups}
-              onDeploy={handleDeployProposal}
-              isDeploying={isDeploying}
-              hasActivePosition={!!position}
-            />
+                <div className="max-w-md mx-auto space-y-3">
+                  <h3 className="text-sm font-bold text-white uppercase tracking-wider font-display">
+                    Sentry Bot Connection Standby
+                  </h3>
+                  <p className="text-xs text-gray-400 font-sans leading-relaxed">
+                    Alpaca integration channels are currently offline. In this state, actual Alpaca account equity, connected trade lists, real-time SPY pricing nodes, and AI swing screening matrices are fully suspended.
+                  </p>
+                  
+                  <div className="pt-4 border-t border-theme-border/50 text-left space-y-2">
+                    <p className="text-[10px] text-gray-500 font-mono uppercase tracking-wider">How to activate connection:</p>
+                    <ul className="text-xs text-gray-400 space-y-1.5 list-disc pl-4 font-sans">
+                      <li>Ensure your Alpaca credentials are configured under Connection Settings.</li>
+                      <li>Click the <span className="text-theme-accent font-semibold uppercase">"Connect Alpaca"</span> trigger in the header panel.</li>
+                      <li>This connects to REST APIs, polls balances, and activates your live terminal view without starting autonomous swing cycles.</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <>
+                {!config.isBotRunning && (
+                  <div className="bg-amber-500/10 border border-amber-500/30 rounded p-4 text-xs font-mono text-amber-400 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" />
+                      <span><strong>Terminal Mode Active &bull; Swing Scheduler Paused:</strong> Real-time balances and tracking panels are connected, but autonomous automated scans and buy/sell execution sequences are currently offline.</span>
+                    </div>
+                    <button
+                      onClick={handleToggleBot}
+                      className="bg-amber-500 hover:bg-amber-400 text-black px-3 py-1.5 rounded font-black uppercase text-[10px] transition-colors cursor-pointer shrink-0 text-center"
+                    >
+                      Activate Trading
+                    </button>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
+                  <div className="md:col-span-2">
+                    <ActivePositionPanel
+                      position={position}
+                      onExitPosition={handleExitPosition}
+                      isExiting={isExiting}
+                    />
+                  </div>
+                </div>
+
+                <ScreenerPanel
+                  setups={setups}
+                  onDeploy={handleDeployProposal}
+                  isDeploying={isDeploying}
+                  hasActivePosition={!!position}
+                />
+              </>
+            )}
           </div>
         </div>
 

@@ -6,6 +6,7 @@ export interface BotConfig {
   NEWSAPI_KEY: string;
   isPaper: boolean;
   isBotRunning: boolean;
+  isConnectionActive: boolean;
   scanIntervalMinutes: number;
 }
 
@@ -34,6 +35,12 @@ export interface StockSetup {
   catalystEvent: string;
   catalystDate: string;
   relativeStrengthRatio: number; // vs SPY
+  hasBullishFVG?: boolean;
+  bullishFVGPrice?: number;
+  supplyZone?: number;
+  demandZone?: number;
+  avgVolume20d?: number;
+  rsiStatus?: string;
 }
 
 export interface ActivePosition {
@@ -55,6 +62,12 @@ export interface ActivePosition {
   reviewReason?: string;
   aiCommentary?: string;
   enteredAt: string;
+  hasBullishFVG?: boolean;
+  bullishFVGPrice?: number;
+  supplyZone?: number;
+  demandZone?: number;
+  avgVolume20d?: number;
+  rsiStatus?: string;
 }
 
 export interface ClosedTrade {

@@ -91,6 +91,35 @@ export default function ActivePositionPanel({
           </div>
         </div>
 
+        {/* Technical Highlights for Active Position */}
+        {(position.rsiStatus || position.hasBullishFVG || position.demandZone) && (
+          <div className="mb-4 p-3 bg-black/40 border border-theme-border rounded-lg space-y-1 text-[11px] font-mono">
+            <div className="text-[9px] text-theme-accent font-bold uppercase tracking-wider">
+              Technical Metrics At Entrance
+            </div>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span className="text-gray-300">
+                RSI: <span className="text-white font-bold">{position.rsiStatus || "NEUTRAL"}</span>
+              </span>
+              {position.hasBullishFVG && (
+                <span className="text-sky-400 font-bold">
+                  &bull; Bullish FVG Gap: ${position.bullishFVGPrice}
+                </span>
+              )}
+              {position.demandZone && (
+                <span className="text-gray-300">
+                  &bull; Demand Floor: <span className="text-white font-semibold">${position.demandZone}</span>
+                </span>
+              )}
+              {position.supplyZone && (
+                <span className="text-gray-300">
+                  &bull; Supply Ceiling: <span className="text-white font-semibold">${position.supplyZone}</span>
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Dynamic target tracking progress bar */}
         <div className="my-6 space-y-2 bg-theme-input/40 border border-theme-border/40 p-4 rounded-lg">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between text-[11px] font-mono gap-1.5">

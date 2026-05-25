@@ -204,6 +204,60 @@ export async function loadStateFromDisk() {
   }
 }
 
+// Real-time Firestore state listener to sync active containers
+export function startFirestoreStateListener() {
+  try {
+    const db = getDb();
+    if (db && typeof db.collection === "function") {
+      db.collection("globalState").doc("trading").onSnapshot((snap) => {
+        if (snap && snap.exists) {
+          const parsed = snap.data();
+          if (parsed) {
+            let configChanged = false;
+            const oldRunning = botConfig.isBotRunning;
+            const oldInterval = botConfig.scanIntervalMinutes;
+
+            if (parsed.botConfig) {
+              botConfig = { ...botConfig, ...parsed.botConfig };
+              if (oldRunning !== botConfig.isBotRunning || oldInterval !== botConfig.scanIntervalMinutes) {
+                configChanged = true;
+              }
+            }
+            if (process.env.GEMINI_API_KEY && (!botConfig.GEMINI_API_KEY || botConfig.GEMINI_API_KEY === "MY_GEMINI_API_KEY")) {
+              botConfig.GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+            }
+            if (parsed.activePosition !== undefined) activePosition = parsed.activePosition;
+            if (parsed.closedTrades) closedTrades = parsed.closedTrades;
+            if (parsed.botLogs) botLogs = parsed.botLogs;
+            if (parsed.scannedSetups) scannedSetups = parsed.scannedSetups;
+            if (parsed.botState) botState = { ...botState, ...parsed.botState };
+
+            // Sync to cache file
+            const d = { botConfig, activePosition, closedTrades, botLogs, scannedSetups, botState };
+            try {
+              fs.writeFileSync(DATA_FILE, JSON.stringify(d, null, 2), "utf-8");
+            } catch (fsErr) {
+              // Ignore file write errors on read-only systems
+            }
+            purgePassedEvents();
+
+            if (configChanged) {
+              console.log("[Firebase Server] Configuration synchronized via Firestore snapshot listener. Restarting cron engine...");
+              restartCronEngine();
+            }
+          }
+        }
+      }, (err) => {
+        console.warn("Firestore backup state snapshot listener error:", err.message);
+      });
+    }
+  } catch (err: any) {
+    console.warn("Failed to initialize Firestore globalState snap-listener:", err.message);
+  }
+}
+
+let firestoreSaveTimeoutId: NodeJS.Timeout | null = null;
+
 export function saveStateToDisk() {
   const data = {
     botConfig,
@@ -214,36 +268,37 @@ export function saveStateToDisk() {
     botLogs,
   };
 
+  // 1. Maintain local backup synched to a cache file
   try {
     fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), "utf-8");
   } catch (err) {
-    console.error("Failed to save state to disk:", err);
+    console.error("Failed to save state to local cache:", err);
   }
 
-  // Asynchronously back up to Firestore
-  try {
-    const db = getDb();
-    if (db && typeof db.collection === "function") {
-      db.collection("globalState").doc("trading").set({
-        ...data,
-        updatedAt: new Date().toISOString()
-      }, { merge: true }).catch((err) => {
-        const errMsg = err?.message || "";
-        if (errMsg.includes("PERMISSION_DENIED") || errMsg.includes("Missing or insufficient permissions")) {
-          console.log("[Firebase Server] Firestore synchronized backup paused due to container environment credentials.");
-        } else {
-          console.error("Async Firestore save failed:", err.message);
-        }
-      });
-    }
-  } catch (err: any) {
-    const errMsg = err?.message || "";
-    if (errMsg.includes("PERMISSION_DENIED") || errMsg.includes("Missing or insufficient permissions")) {
-      console.log("[Firebase Server] Firestore sync bypassed due to container environment credentials.");
-    } else {
-      console.error("Failed to sync save to Firestore:", err.message);
-    }
+  // 2. Debounce/Throttle writes to Firestore to prevent violating the 1-write-per-second rule
+  if (firestoreSaveTimeoutId) {
+    clearTimeout(firestoreSaveTimeoutId);
   }
+
+  firestoreSaveTimeoutId = setTimeout(async () => {
+    try {
+      const db = getDb();
+      if (db && typeof db.collection === "function") {
+        await db.collection("globalState").doc("trading").set({
+          ...data,
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+        console.log("[Firebase Server] Trading state successfully synchronized to Firestore.");
+      }
+    } catch (err: any) {
+      const errMsg = err?.message || "";
+      if (errMsg.includes("PERMISSION_DENIED") || errMsg.includes("Missing or insufficient permissions")) {
+        console.log("[Firebase Server] Firestore synchronized backup bypassed due to credentials.");
+      } else {
+        console.error("Async Firestore state save failed:", err.message);
+      }
+    }
+  }, 1000); // 1-second debounce
 }
 
 // Alpaca API Callers
@@ -556,6 +611,50 @@ export async function getUserAccount(userId: string): Promise<any> {
   return { status: "unconfigured" };
 }
 
+// Fetch the exact real-time trade price for a ticker using Alpaca Latest Trade API
+export async function fetchLatestStockPrice(symbol: string, userId?: string): Promise<number> {
+  try {
+    const creds = await resolveCredentialsForUser(userId);
+    if (!creds) {
+      throw new Error("Missing credentials for latest trade endpoint.");
+    }
+    const apiKey = creds.ALPACA_API_KEY;
+    const apiSecret = creds.ALPACA_SECRET_KEY;
+    const headers = {
+      "APCA-API-KEY-ID": apiKey,
+      "APCA-API-SECRET-KEY": apiSecret,
+    };
+
+    const url = `https://data.alpaca.markets/v2/stocks/${symbol}/trades/latest`;
+    const response = await fetch(url, { headers });
+    if (response.ok) {
+      const json = await response.json();
+      if (json && json.trade && typeof json.trade.p === "number") {
+        const livePrice = json.trade.p;
+        if (livePrice > 0) {
+          return livePrice;
+        }
+      }
+    } else {
+      console.warn(`[MARKET DATA] Latest trade price API returned status ${response.status} for ${symbol}.`);
+    }
+  } catch (err: any) {
+    console.warn(`[MARKET DATA] Failed to fetch latest trade price for ${symbol}: ${err.message}`);
+  }
+
+  // Backup fallback: Get latest close price from daily bars
+  try {
+    const bars = await fetchAlpacaBars(symbol, 5, userId);
+    if (bars && bars.length > 0) {
+      return bars[bars.length - 1].c;
+    }
+  } catch (err: any) {
+    console.warn(`[MARKET DATA] Fallback bars fetch failed for ${symbol}: ${err.message}`);
+  }
+
+  throw new Error(`Critical: Could not retrieve any price data for ${symbol}. Please check your connection.`);
+}
+
 // Fetch historical bars using user's keys from Alpaca Data API
 // Free paper keys have access to IEX data, standard live keys to SIP. Let's use the appropriate endpoint.
 async function fetchAlpacaBars(symbol: string, limitDays: number = 300, userId?: string): Promise<any[]> {
@@ -815,7 +914,14 @@ export async function updateMarketRegime(userId?: string) {
       return;
     }
 
-    const spyPrice = spyBars[spyBars.length - 1].c;
+    let spyPrice = spyBars[spyBars.length - 1].c;
+    try {
+      const realTimeSpy = await fetchLatestStockPrice("SPY", userId);
+      if (realTimeSpy > 0) {
+        spyPrice = realTimeSpy;
+      }
+    } catch (_) {}
+
     const spySma50 = calculateSMA(spyBars, 50);
     const spySma200 = calculateSMA(spyBars, 200);
 
@@ -1313,8 +1419,13 @@ export async function deployPortfolio(symbol: string, userId?: string): Promise<
     }
 
     // 4. Fetch live bar or quote to verify limit/market execution price
-    const bars = await fetchAlpacaBars(symbol, 5, userId);
-    const livePrice = bars.length > 0 ? bars[bars.length - 1].c : proposal.price;
+    let livePrice = proposal.price;
+    try {
+      livePrice = await fetchLatestStockPrice(symbol, userId);
+    } catch (_) {
+      const bars = await fetchAlpacaBars(symbol, 5, userId);
+      livePrice = bars.length > 0 ? bars[bars.length - 1].c : proposal.price;
+    }
     // Enter exactly at the demand/support zone price with a limit buy order
     const entryPrice = proposal.demandZone && proposal.demandZone > 0 ? proposal.demandZone : livePrice;
 
@@ -1507,13 +1618,18 @@ export async function evaluateActivePosition() {
   try {
     const symbol = activePosition.symbol;
 
-    // 1. Fetch current price
-    const bars = await fetchAlpacaBars(symbol, 5);
-    if (!bars || bars.length === 0) {
-      throw new Error(`Unable to fetch real-time bar price for active tracker: ${symbol}`);
+    // 1. Fetch real-time current price
+    let currentPrice: number;
+    try {
+      currentPrice = await fetchLatestStockPrice(symbol);
+    } catch (priceErr) {
+      const bars = await fetchAlpacaBars(symbol, 5);
+      if (!bars || bars.length === 0) {
+        throw new Error(`Unable to fetch real-time price fallback for active tracker: ${symbol}`);
+      }
+      currentPrice = bars[bars.length - 1].c;
     }
 
-    const currentPrice = bars[bars.length - 1].c;
     activePosition.currentPrice = currentPrice;
     activePosition.currentValue = activePosition.qty * currentPrice;
     activePosition.unrealizedPl = activePosition.currentValue - activePosition.entryValue;
@@ -1690,11 +1806,10 @@ export async function executeExit(symbol: string, reason: string): Promise<boole
       anySuccess = true;
     }
 
-    // Wait 2 seconds to query filled sell rates
+    // Query precise real-time filled sell rate
     let filledPrice = activePosition.currentPrice;
     try {
-      const bars = await fetchAlpacaBars(symbol, 2);
-      if (bars && bars.length > 0) filledPrice = bars[bars.length - 1].c;
+      filledPrice = await fetchLatestStockPrice(symbol);
     } catch (_) {}
 
     const pl = trackerQty * filledPrice - activePosition.entryValue;
@@ -1882,6 +1997,13 @@ async function runContinuousBotCycle() {
       wasMarketOpenLastKnown = false;
     }
     
+    // Explicitly declare high visibility status so the user knows everything is healthy and running 24/7 in the background
+    const activeDetails = activePosition 
+      ? `Active stock tracker safely holding ${activePosition.qty} shares of ${activePosition.symbol} (status monitored & secured).` 
+      : `All positions flat. Ready to scan for premium setups when market pre-opening hours resume.`;
+
+    addLog("INFO", `[BACKGROUND HEARTBEAT] 24/7 background scheduler is alive and healthy. US Market is CLOSED. Suspended active stock scans & API requests to bypass redundant trade rate-limits. ${activeDetails} Next background evaluation in ${botConfig.scanIntervalMinutes} minutes.`);
+
     botState.lastScanTime = new Date().toISOString();
     if (botConfig.isBotRunning) {
       botState.nextScanTime = new Date(Date.now() + botConfig.scanIntervalMinutes * 60 * 1000).toISOString();

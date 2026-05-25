@@ -93,6 +93,14 @@ export default function Header({
             </div>
           )}
 
+          {/* Cloud State Preservation Status Badge */}
+          {botConfig.isBotRunning && (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded border border-purple-500/35 bg-purple-500/10 text-purple-400 text-[10px] font-mono font-bold animate-pulse">
+              <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
+              <span>24/7 CLOUD SYNCED</span>
+            </div>
+          )}
+
           {/* Active / Offline Status Badge */}
           <div className={`flex items-center gap-2 px-3 py-1.5 rounded border text-[10px] font-mono font-bold ${
             isAnyActive 

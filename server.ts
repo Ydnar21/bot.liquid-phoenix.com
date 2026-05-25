@@ -4,6 +4,7 @@ import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import {
   loadStateFromDisk,
+  startFirestoreStateListener,
   getBotConfig,
   updateBotConfig,
   getBotState,
@@ -29,6 +30,7 @@ async function startServer() {
 
   // Bootstrap data on start
   await loadStateFromDisk();
+  startFirestoreStateListener();
   restartCronEngine();
 
   addLog("INFO", "FastAPI-to-Node core port completed. Server state bootstrapped.");

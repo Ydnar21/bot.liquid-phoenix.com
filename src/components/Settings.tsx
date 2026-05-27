@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Key, ShieldCheck, Database, HelpCircle, Save, Settings as SettingsIcon } from "lucide-react";
+import { Key, ShieldCheck, Database, HelpCircle, Save, Settings as SettingsIcon, Eye, EyeOff } from "lucide-react";
 import { BotConfig } from "../types";
 import { db, switchToDefaultClientDb } from "../firebase";
 import { doc, getDoc, setDoc } from "firebase/firestore";
@@ -17,6 +17,8 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
   const [newsKey, setNewsKey] = useState("");
   const [isSaved, setIsSaved] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [showApiSecret, setShowApiSecret] = useState(false);
 
   // Load private credentials from current user's Firestore path if logged in
   useEffect(() => {
@@ -144,13 +146,23 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
             <label className="text-[10px] text-gray-400 block uppercase font-mono tracking-wider flex items-center gap-1.5">
               <Key className="w-3 h-3 text-theme-accent" /> Alpaca API Key ID
             </label>
-            <input
-              type="text"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="e.g. PKX****************Y"
-              className="w-full bg-theme-input border border-theme-border rounded px-3 py-1.5 text-xs text-theme-accent font-mono focus:outline-none focus:border-theme-accent"
-            />
+            <div className="relative flex items-center">
+              <input
+                type={showApiKey ? "text" : "password"}
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder="e.g. PKX****************Y"
+                className="w-full bg-theme-input border border-theme-border rounded pl-3 pr-10 py-1.5 text-xs text-theme-accent font-mono focus:outline-none focus:border-theme-accent"
+              />
+              <button
+                type="button"
+                onClick={() => setShowApiKey(!showApiKey)}
+                className="absolute right-2 px-1.5 py-1 text-gray-400 hover:text-white transition-colors cursor-pointer"
+                title={showApiKey ? "Hide Key ID" : "Show Key ID"}
+              >
+                {showApiKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+              </button>
+            </div>
           </div>
 
           {/* Alpaca Secret Key */}
@@ -158,13 +170,23 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
             <label className="text-[10px] text-gray-400 block uppercase font-mono tracking-wider flex items-center gap-1.5">
               <ShieldCheck className="w-3 h-3 text-theme-accent" /> Alpaca Secret Key
             </label>
-            <input
-              type="password"
-              value={apiSecret}
-              onChange={(e) => setApiSecret(e.target.value)}
-              placeholder="e.g. ************************************"
-              className="w-full bg-theme-input border border-theme-border rounded px-3 py-1.5 text-xs text-theme-accent font-mono focus:outline-none focus:border-theme-accent"
-            />
+            <div className="relative flex items-center">
+              <input
+                type={showApiSecret ? "text" : "password"}
+                value={apiSecret}
+                onChange={(e) => setApiSecret(e.target.value)}
+                placeholder="e.g. ************************************"
+                className="w-full bg-theme-input border border-theme-border rounded pl-3 pr-10 py-1.5 text-xs text-theme-accent font-mono focus:outline-none focus:border-theme-accent"
+              />
+              <button
+                type="button"
+                onClick={() => setShowApiSecret(!showApiSecret)}
+                className="absolute right-2 px-1.5 py-1 text-gray-400 hover:text-white transition-colors cursor-pointer"
+                title={showApiSecret ? "Hide Secret" : "Show Secret"}
+              >
+                {showApiSecret ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+              </button>
+            </div>
           </div>
 
           {/* Base URL (Paper vs Live) */}

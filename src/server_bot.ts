@@ -209,7 +209,7 @@ export function startFirestoreStateListener() {
   try {
     const db = getDb();
     if (db && typeof db.collection === "function") {
-      db.collection("globalState").doc("trading").onSnapshot((snap) => {
+      const unsubscribe = db.collection("globalState").doc("trading").onSnapshot((snap) => {
         if (snap && snap.exists) {
           const parsed = snap.data();
           if (parsed) {
@@ -249,6 +249,10 @@ export function startFirestoreStateListener() {
         }
       }, (err) => {
         console.warn("Firestore backup state snapshot listener error:", err.message);
+        if (err.message.includes("PERMISSION_DENIED") || err.message.includes("permission_denied") || err.message.includes("Error 7") || err.message.includes("insufficient permissions")) {
+          console.warn("[Firebase Server] Insufficient IAM permissions on snapshot listener. Unsubscribing to prevent warning logs; executing stable cached state loops with robust auto-fallbacks.");
+          if (typeof unsubscribe === "function") unsubscribe();
+        }
       });
     }
   } catch (err: any) {
@@ -531,9 +535,6 @@ let lastLoggedConnectionErrorMap: Record<string, string> = {};
 
 // Get user account details directly from Alpaca
 export async function getUserAccount(userId: string): Promise<any> {
-  if (!botConfig.isConnectionActive && !botConfig.isBotRunning) {
-    return { status: "bot_paused" };
-  }
   let creds: any = null;
 
   // 1. Try local offline credentials backup first
@@ -588,6 +589,17 @@ export async function getUserAccount(userId: string): Promise<any> {
         console.warn(`Could not load user-specific credentials for ${userId} from Firestore: ${err.message}. Checking master config fallback...`);
       }
     }
+  }
+
+  // Auto-connect if credentials exist for the user
+  if (creds && !botConfig.isConnectionActive) {
+    botConfig.isConnectionActive = true;
+    addLog("SUCCESS", `[CONNECTION ENGINE] Saved credentials detected for user ${userId}. Connection channel automatically activated.`);
+    saveStateToDisk();
+  }
+
+  if (!botConfig.isConnectionActive && !botConfig.isBotRunning) {
+    return { status: "bot_paused" };
   }
 
   // Fall back to master bot configuration keys if user-specific keys are missing

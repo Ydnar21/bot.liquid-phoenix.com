@@ -92,7 +92,7 @@ export default function ActivePositionPanel({
         </div>
 
         {/* Technical Highlights for Active Position */}
-        {(position.rsiStatus || position.hasBullishFVG || position.demandZone) && (
+        {(position.rsiStatus || position.isEMA20Pullback || position.isEMA50Pullback || position.demandZone) && (
           <div className="mb-4 p-3 bg-black/40 border border-theme-border rounded-lg space-y-1 text-[11px] font-mono">
             <div className="text-[9px] text-theme-accent font-bold uppercase tracking-wider">
               Technical Metrics At Entrance
@@ -101,9 +101,14 @@ export default function ActivePositionPanel({
               <span className="text-gray-300">
                 RSI: <span className="text-white font-bold">{position.rsiStatus || "NEUTRAL"}</span>
               </span>
-              {position.isSMAPullback && (
-                <span className="text-indigo-400 font-bold">
-                  &bull; SMA(50) Pullback Test: ${position.sma50Price}
+              {position.isEMA20Pullback && (
+                <span className="text-emerald-400 font-bold">
+                  &bull; 20 EMA Dip-Buy: ${position.ema20Price}
+                </span>
+              )}
+              {position.isEMA50Pullback && (
+                <span className="text-teal-400 font-bold">
+                  &bull; 50 EMA Dip-Buy: ${position.ema50Price}
                 </span>
               )}
               {position.demandZone && (

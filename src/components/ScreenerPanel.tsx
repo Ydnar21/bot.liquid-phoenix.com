@@ -90,9 +90,14 @@ export default function ScreenerPanel({
                         }`}>
                           RSI: {setup.rsi} ({setup.rsiStatus || "NEUTRAL"})
                         </span>
-                        {setup.isSMAPullback && (
-                          <span className="text-[9px] bg-indigo-500/10 border border-indigo-500/25 text-indigo-400 px-1.5 py-0.5 rounded font-mono font-bold animate-pulse">
-                            SMA(50) Pullback Test: ${setup.sma50Price}
+                        {setup.isEMA20Pullback && (
+                          <span className="text-[9px] bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 px-1.5 py-0.5 rounded font-mono font-bold animate-pulse">
+                            20 EMA Dip-Buy: ${setup.ema20Price}
+                          </span>
+                        )}
+                        {setup.isEMA50Pullback && (
+                          <span className="text-[9px] bg-teal-500/10 border border-teal-500/25 text-teal-400 px-1.5 py-0.5 rounded font-mono font-bold animate-pulse">
+                            50 EMA Dip-Buy: ${setup.ema50Price}
                           </span>
                         )}
                         <span className="text-[9px] bg-slate-500/15 border border-theme-border text-slate-300 px-1.5 py-0.5 rounded font-mono">
@@ -136,39 +141,39 @@ export default function ScreenerPanel({
                       🎯 {setup.reason}
                     </p>
 
-                    {/* All 8 Fundamental rules indicators mapping */}
+                    {/* All 8 Technical rules/metrics indicators mapping */}
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-mono">
                       <div className="bg-theme-input p-2.5 rounded border border-theme-border space-y-0.5">
-                        <span className="text-[9px] text-gray-500 block uppercase font-bold">P/E (&lt; 100x)</span>
-                        <span className="font-bold text-white">{setup.pe}x</span>
+                        <span className="text-[9px] text-gray-500 block uppercase font-bold">20 EMA Support</span>
+                        <span className="font-bold text-emerald-400">${setup.ema20Price || "N/A"}</span>
                       </div>
                       <div className="bg-theme-input p-2.5 rounded border border-theme-border space-y-0.5">
-                        <span className="text-[9px] text-gray-500 block uppercase font-bold">Revenue (&gt; 5%)</span>
-                        <span className="font-bold text-emerald-400">+{setup.revenueGrowth}%</span>
+                        <span className="text-[9px] text-gray-500 block uppercase font-bold">50 EMA Support</span>
+                        <span className="font-bold text-teal-400">${setup.ema50Price || "N/A"}</span>
                       </div>
                       <div className="bg-theme-input p-2.5 rounded border border-theme-border space-y-0.5">
-                        <span className="text-[9px] text-gray-500 block uppercase font-bold">Gross M. (&gt; 40%)</span>
-                        <span className="font-bold text-emerald-400">{setup.grossMargin}%</span>
+                        <span className="text-[9px] text-gray-500 block uppercase font-bold">50 SMA Line</span>
+                        <span className="font-bold text-white">${setup.sma50}</span>
                       </div>
                       <div className="bg-theme-input p-2.5 rounded border border-theme-border space-y-0.5">
-                        <span className="text-[9px] text-gray-500 block uppercase font-bold">Net M. (&gt; 0%)</span>
-                        <span className="font-bold text-emerald-400">+{setup.netMargin}%</span>
+                        <span className="text-[9px] text-gray-500 block uppercase font-bold">200 SMA Line</span>
+                        <span className="font-bold text-white">${setup.sma200}</span>
                       </div>
                       <div className="bg-theme-input p-2.5 rounded border border-theme-border space-y-0.5">
-                        <span className="text-[9px] text-gray-500 block uppercase font-bold">Debt/Eq (&lt; 1.5)</span>
-                        <span className="font-bold text-white">{setup.debtToEquity}</span>
+                        <span className="text-[9px] text-gray-500 block uppercase font-bold">Stop Loss Target</span>
+                        <span className="font-bold text-rose-400">${setup.supportLevel}</span>
                       </div>
                       <div className="bg-theme-input p-2.5 rounded border border-theme-border space-y-0.5">
-                        <span className="text-[9px] text-gray-500 block uppercase font-bold">Market Cap</span>
-                        <span className="font-bold text-white">${setup.marketCapBillion}B</span>
+                        <span className="text-[9px] text-gray-500 block uppercase font-bold">Profit Target</span>
+                        <span className="font-bold text-emerald-400">${setup.targetPrice}</span>
                       </div>
                       <div className="bg-theme-input p-2.5 rounded border border-theme-border space-y-0.5">
-                        <span className="text-[9px] text-gray-500 block uppercase font-bold">FCF POSITIVE</span>
-                        <span className="font-bold text-emerald-400">YES</span>
+                        <span className="text-[9px] text-gray-500 block uppercase font-bold">vs SPY Strength</span>
+                        <span className="font-bold text-emerald-400">{setup.relativeStrengthRatio > 0 ? "+" : ""}{(setup.relativeStrengthRatio * 100).toFixed(2)}%</span>
                       </div>
                       <div className="bg-theme-input p-2.5 rounded border border-theme-border space-y-0.5">
-                        <span className="text-[9px] text-gray-500 block uppercase font-bold">Golden Trend</span>
-                        <span className="font-bold text-emerald-400">50 &gt; 200 SMA</span>
+                        <span className="text-[9px] text-gray-500 block uppercase font-bold font-sans">Trend Mode</span>
+                        <span className="font-bold text-emerald-400">Bullish Stacked</span>
                       </div>
                     </div>
 

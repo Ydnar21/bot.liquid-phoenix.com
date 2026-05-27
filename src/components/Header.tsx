@@ -105,20 +105,25 @@ export default function Header({
           <div className={`flex items-center gap-2 px-3 py-1.5 rounded border text-[10px] font-mono font-bold ${
             isAnyActive 
               ? (alpacaAccount && (alpacaAccount.status === "connected" || alpacaAccount.status === "success")
-                ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" 
+                ? (botConfig.isBotRunning && !botState.isMarketOpen
+                  ? "bg-amber-500/10 border-amber-500/30 text-amber-500"
+                  : "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+                )
                 : "bg-amber-500/10 border-amber-500/30 text-amber-500")
               : "bg-theme-input border-theme-border text-gray-500"
           }`}>
             <span className={`w-1.5 h-1.5 rounded-full ${
               isAnyActive 
                 ? (alpacaAccount && (alpacaAccount.status === "connected" || alpacaAccount.status === "success")
-                  ? "bg-emerald-400 animate-pulse" 
+                  ? (botConfig.isBotRunning && !botState.isMarketOpen
+                    ? "bg-amber-500 animate-pulse"
+                    : "bg-emerald-400 animate-pulse")
                   : "bg-amber-500 animate-pulse")
                 : "bg-white/20"
             }`} />
             <span>
               {botConfig.isBotRunning 
-                ? "● SWING BOT ACTIVE"
+                ? (botState.isMarketOpen ? "● SWING BOT ACTIVE" : "● BOT SLEEPING (MARKET CLOSED)")
                 : botConfig.isConnectionActive
                 ? (alpacaAccount && (alpacaAccount.status === "connected" || alpacaAccount.status === "success")
                   ? "● ALPACA CONNECTED" 

@@ -690,6 +690,15 @@ export default function App() {
                   </div>
                 )}
 
+                {config.isBotRunning && !botState.isMarketOpen && (
+                  <div className="bg-amber-500/10 border border-amber-500/30 rounded p-4 text-xs font-mono text-amber-500 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" />
+                      <span><strong>US Market is CLOSED &bull; Bot is in On-Duty Standby:</strong> The Swing trading bot is active, healthy, and synced 24/7. However, active scans and trading actions are currently paused because the US stock market is closed. Tracking and automated sweeps will fully resume when pre-market or standard hours open.</span>
+                    </div>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
                   <div className="md:col-span-2">
                     <ActivePositionPanel

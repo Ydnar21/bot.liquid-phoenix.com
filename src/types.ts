@@ -39,6 +39,10 @@ export interface StockSetup {
   bullishFVGPrice?: number;
   isSMAPullback?: boolean;
   sma50Price?: number;
+  isEMA20Pullback?: boolean;
+  ema20Price?: number;
+  isEMA50Pullback?: boolean;
+  ema50Price?: number;
   supplyZone?: number;
   demandZone?: number;
   avgVolume20d?: number;
@@ -68,6 +72,10 @@ export interface ActivePosition {
   bullishFVGPrice?: number;
   isSMAPullback?: boolean;
   sma50Price?: number;
+  isEMA20Pullback?: boolean;
+  ema20Price?: number;
+  isEMA50Pullback?: boolean;
+  ema50Price?: number;
   supplyZone?: number;
   demandZone?: number;
   avgVolume20d?: number;
@@ -110,7 +118,7 @@ export interface BotState {
 
 export interface StoredEvent {
   id: string;
-  source: 'FOMC' | 'CPI' | 'EARNINGS' | 'CATALYST';
+  source: 'FOMC' | 'CPI' | 'EARNINGS' | 'CATALYST' | 'IPO';
   symbol?: string;
   eventName: string;
   eventDate: string; // YYYY-MM-DD

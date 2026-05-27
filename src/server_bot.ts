@@ -57,7 +57,7 @@ let botState: BotState = {
 
 // Event Storage Management Helpers
 export function storeEvent(
-  source: 'FOMC' | 'CPI' | 'EARNINGS' | 'CATALYST',
+  source: 'FOMC' | 'CPI' | 'EARNINGS' | 'CATALYST' | 'IPO',
   eventName: string,
   eventDate: string,
   symbol?: string,
@@ -332,7 +332,34 @@ export async function getAllUserCredentials(): Promise<UserCredentials[]> {
       });
     }
   } catch (error: any) {
-    console.warn("Failed to query user credentials CollectionGroup (this is expected if running unauthenticated locally):", error.message);
+    if (error.message.includes("PERMISSION_DENIED") || error.message.includes("permission_denied") || error.message.includes("permissions")) {
+      // Quietly fall back to retrieving users individually since collection group queries require administrative index or specific IAM permissions
+      try {
+        const db = getDb();
+        if (db && typeof db.collection === "function") {
+          const usersSnap = await db.collection("users").get();
+          for (const userDoc of usersSnap.docs) {
+            const userId = userDoc.id;
+            const credsDoc = await db.collection("users").doc(userId).collection("private").doc("credentials").get();
+            if (credsDoc.exists) {
+              const data = credsDoc.data();
+              if (data && data.ALPACA_API_KEY && data.ALPACA_SECRET_KEY) {
+                credentialsList.push({
+                  userId,
+                  ALPACA_API_KEY: data.ALPACA_API_KEY,
+                  ALPACA_SECRET_KEY: data.ALPACA_SECRET_KEY,
+                  ALPACA_BASE_URL: data.ALPACA_BASE_URL || "https://paper-api.alpaca.markets",
+                });
+              }
+            }
+          }
+        }
+      } catch (fallbackError: any) {
+        console.info("User credentials fallback query also bypassed (using local file persistence):", fallbackError.message);
+      }
+    } else {
+      console.warn("Failed to query user credentials CollectionGroup (this is expected if running unauthenticated locally):", error.message);
+    }
   }
 
   // Robust secure offline fallback: search for local connection credential backups
@@ -775,6 +802,17 @@ function calculateSMA(bars: any[], period: number): number {
   return sum / period;
 }
 
+function calculateEMA(bars: any[], period: number): number {
+  if (bars.length < period) return 0;
+  const k = 2 / (period + 1);
+  let ema = calculateSMA(bars.slice(0, period), period);
+  if (ema === 0) ema = bars[0].c;
+  for (let i = period; i < bars.length; i++) {
+    ema = bars[i].c * k + ema * (1 - k);
+  }
+  return ema;
+}
+
 function calculateAverageVolume(bars: any[], period: number): number {
   if (bars.length < period) return 0;
   const slice = bars.slice(-period);
@@ -968,21 +1006,23 @@ async function checkFOMCBlackout() {
 
     const currentDate = new Date().toISOString().split("T")[0];
     const prompt = `Classify if today (${currentDate}) is within 2 trading days OF an upcoming Federal Reserve FOMC interest rate decision or a major US CPI inflation release. Also, look up and find the exact calendar dates of the next upcoming FOMC interest rate decision and the next upcoming major US CPI release.
+    Additionally, look up and locate key upcoming Initial Public Offerings (IPOs) scheduled for the current or upcoming weeks.
     Format your response exactly as this JSON object structure:
     {
       "fomcBlackout": boolean,
       "details": "A brief explanation of dates found or closest event",
       "upcomingEvents": [
         {
-          "type": "FOMC" or "CPI",
-          "eventName": "Federal Reserve Rate Decision" or "US CPI Inflation Release",
+          "type": "FOMC" or "CPI" or "IPO",
+          "eventName": "Federal Reserve Rate Decision", "US CPI Inflation Release", or "[Company Name] IPO Listing",
           "eventDate": "YYYY-MM-DD",
-          "details": "Brief context about the event"
+          "symbol": "Optional ticker symbol if available for IPO",
+          "details": "Brief context about the event, expected price range or relevance"
         }
       ]
     }`;
 
-    addLog("INFO", "Asking Gemini to scan upcoming Fed interest rate and CPI announcements...");
+    addLog("INFO", "Asking Gemini with Search Grounding to scan upcoming Fed interest decisions, CPI inflation metrics, and new IPO offerings...");
     const response = await ai.models.generateContent({
       model: "gemini-3.5-flash",
       contents: prompt,
@@ -1000,8 +1040,8 @@ async function checkFOMCBlackout() {
     if (Array.isArray(parsed.upcomingEvents)) {
       parsed.upcomingEvents.forEach((ev: any) => {
         if (ev.type && ev.eventName && ev.eventDate) {
-          const typeUpper = ev.type.toUpperCase() as 'FOMC' | 'CPI' | 'EARNINGS' | 'CATALYST';
-          storeEvent(typeUpper, ev.eventName, ev.eventDate, undefined, ev.details);
+          const typeUpper = ev.type.toUpperCase() as 'FOMC' | 'CPI' | 'EARNINGS' | 'CATALYST' | 'IPO';
+          storeEvent(typeUpper, ev.eventName, ev.eventDate, ev.symbol || undefined, ev.details);
         }
       });
     }
@@ -1040,37 +1080,59 @@ export async function scanForSetups(userId?: string) {
 
     const proposedSetups: StockSetup[] = [];
 
+    // Detailed counters for scan verbosity
+    let evaluatedCount = 0;
+    let failedSMA200Count = 0;
+    const failedSMA200List: string[] = [];
+    let failedSma50Count = 0;
+    const failedSma50List: string[] = [];
+    let failedPullbackCount = 0;
+    const failedPullbackList: string[] = [];
+    let failedEMAPullbackCount = 0;
+    const failedEMAPullbackList: string[] = [];
+
     // Loop through sector leaders list
     for (const ticker of SECTOR_LEADERS) {
       try {
         const bars = await fetchAlpacaBars(ticker, 250, userId);
         if (!bars || bars.length < 200) continue;
 
+        evaluatedCount++;
         const currentPrice = bars[bars.length - 1].c;
         const currentVol = bars[bars.length - 1].v;
 
         // Calculate moving averages
-        const sma50 = calculateSMA(bars, 50);
         const sma200 = calculateSMA(bars, 200);
 
-        // Filter Rule: 50 SMA > 200 SMA & price above 200 SMA (healthy long term uptrend)
-        if (sma50 <= sma200 || currentPrice <= sma200) {
+        // First Check: Ensure the price is strictly above the 200 SMA (Long-term Bullish Trend Gatekeeper)
+        if (currentPrice <= sma200) {
+          failedSMA200Count++;
+          failedSMA200List.push(ticker);
           continue;
         }
 
-        // Filter Rule: Pullback size 8-35% off 52-week high
+        const sma50 = calculateSMA(bars, 50);
+        const ema20 = calculateEMA(bars, 20);
+
+        // Filter Rule: 50 SMA > 200 SMA (healthy long term uptrend alignment)
+        if (sma50 <= sma200) {
+          failedSma50Count++;
+          failedSma50List.push(ticker);
+          continue;
+        }
+
+        // Filter Rule: Pullback size 5-35% off 52-week high (minimum 5% pullback)
         const highPrices = bars.map(b => b.h);
         const fiftyTwoWeekHigh = Math.max(...highPrices);
         const offHighPct = ((fiftyTwoWeekHigh - currentPrice) / fiftyTwoWeekHigh) * 100;
-        if (offHighPct < 8 || offHighPct > 35) {
+        if (offHighPct < 5 || offHighPct > 35) {
+          failedPullbackCount++;
+          failedPullbackList.push(`${ticker}(${offHighPct.toFixed(1)}%)`);
           continue;
         }
 
-        // Filter Rule: High Volume check - must have at least 500,000 shares avg daily volume
+        // Calculate average daily volume for downstream display
         const avgVol20 = calculateAverageVolume(bars, 20);
-        if (avgVol20 < 500000) {
-          continue;
-        }
 
         // Filter Rule: RSI and Simple Swing Pullback entry triggers
         const rsiHistory = [];
@@ -1080,74 +1142,49 @@ export async function scanForSetups(userId?: string) {
         }
 
         const currentRSI = rsiHistory[rsiHistory.length - 1];
-        const historicalDipped = rsiHistory.slice(0, -1).some(r => r < 40);
-        const bouncedAbove = currentRSI >= 40;
-
-        // Custom high-probability swing pullback setups
-        const rsiRecovery = historicalDipped && bouncedAbove;
         const sdZones = calculateSupplyDemandZones(bars);
+        const ema50 = calculateEMA(bars, 50);
 
-        // Simple but highly effective swing pullback indicators:
-        // 1. Price Pullback to 50 SMA (testing within 3% of SMA50 line)
-        const priceNearSMA50 = currentPrice >= sma50 * 0.97 && currentPrice <= sma50 * 1.03;
-        // 2. Price near major demand support ceiling (within 3%)
-        const priceNearDemand = currentPrice <= (sdZones.demandZone * 1.03);
-        // 3. Daily RSI level is oversold
-        const rsiOversold = currentRSI <= 38;
+        // Define precise indicators: price within 1.5% of the respective EMA line
+        const priceNearEMA20 = currentPrice >= ema20 * 0.985 && currentPrice <= ema20 * 1.015;
+        const priceNearEMA50 = currentPrice >= ema50 * 0.985 && currentPrice <= ema50 * 1.015;
 
-        // We require at least ONE simple & effective dynamic swing pullback confirmation:
-        // - Classic RSI pullback recovery bounce
-        // - Testing down near the institutional SMA(50) moving average support
-        // - Testing down into the major Daily Demand Zone level
-        // - Daily RSI entering oversold zone
+        // Ensure pullbacks happen in a valid trend context (normally strong uptrend)
+        const isEMA20Pullback = priceNearEMA20 && (ema20 > sma50 && sma50 > sma200);
+        const isEMA50Pullback = priceNearEMA50 && (ema50 > sma200);
+
         const entriesTriggered: string[] = [];
-        if (rsiRecovery) entriesTriggered.push("RSI Recovery");
-        if (priceNearSMA50) entriesTriggered.push(`SMA(50) Support Pullback`);
-        if (priceNearDemand) entriesTriggered.push(`Support Zone Floor at $${sdZones.demandZone}`);
-        if (rsiOversold) entriesTriggered.push(`RSI Oversold (${Math.round(currentRSI)})`);
+        if (isEMA20Pullback) entriesTriggered.push("20 EMA Dip-Buy Support");
+        if (isEMA50Pullback) entriesTriggered.push("50 EMA Dip-Buy Support");
 
+        // The pullback MUST be near the 20 EMA or the 50 EMA (strict technical gatekeeper requested by user)
         if (entriesTriggered.length === 0) {
-          // No high probability entry signals found
+          failedEMAPullbackCount++;
+          failedEMAPullbackList.push(ticker);
           continue;
         }
 
-        // Filter Rule: Volume trend (increasing institutional interest)
+        // Volume trend (increasing institutional interest) - calculated but no longer blocking
         const avgVol10 = calculateAverageVolume(bars, 10);
         const avgVol30 = calculateAverageVolume(bars, 30);
         const volumeTrendRatio = avgVol10 / avgVol30;
 
-        if (avgVol10 <= avgVol30) {
-          continue; // 10-day avg volume > 30-day avg
-        }
-
-        // Filter Rule: Entry Bar volume
+        // Entry Bar volume - calculated but no longer blocking
         const entryVolumeRatio = currentVol / avgVol20;
-        const minVolRatio = botState.marketRegime === "STRICT_VOLUME" ? 2.0 : 1.25;
 
-        if (entryVolumeRatio < minVolRatio) {
-          continue;
-        }
-
-        // Filter Rule: Fundamentals Alignment
+        // Fetch fundamental metrics solely for metadata attachment on screeners (no filtering filters applied)
         const fun = getFundamentalMetrics(ticker);
-        if (
-          fun.revenueGrowth <= 5 ||
-          fun.grossMargin <= 40 ||
-          fun.netMargin <= 0 ||
-          fun.pe >= 100 ||
-          fun.debtToEquity >= 1.5 ||
-          !fun.fcfPositive ||
-          fun.marketCapBillion <= 5
-        ) {
-          continue;
-        }
 
         // Exit parameters calculator mapped directly to supply & demand zones
         // Support / stop-loss: demandZone or sma200, whichever is closer to protect capital
         const supportLevel = Math.max(sdZones.demandZone, sma200 * 0.98);
 
         // Resistance / target exit: supplyZone (the major 30-day resistance peak)
-        const targetPrice = sdZones.supplyZone;
+        // If the stock is at All-Time Highs or breaking out of its supply zone (supplyZone <= currentPrice),
+        // there is no historic overhead resistance. In this case, we set the target profit dynamically to 10% above the current price.
+        const targetPrice = sdZones.supplyZone > currentPrice 
+          ? sdZones.supplyZone 
+          : Math.round(currentPrice * 1.1 * 100) / 100;
 
         // Relative Strength vs SPY (falling less than spy over past 10 bars)
         const stockReturn10 = (currentPrice - bars[bars.length - 11].c) / bars[bars.length - 11].c;
@@ -1168,7 +1205,7 @@ export async function scanForSetups(userId?: string) {
           debtToEquity: fun.debtToEquity,
           fcfPositive: fun.fcfPositive,
           marketCapBillion: fun.marketCapBillion,
-          reason: `High volume checks verified. Buy trigger details: ${entriesTriggered.join(" & ")}.`,
+          reason: `Technical swing qualifiers verified. Buy trigger details: ${entriesTriggered.join(" & ")}.`,
           volumeTrendRatio: Math.round(volumeTrendRatio * 100) / 100,
           entryVolumeRatio: Math.round(entryVolumeRatio * 100) / 100,
           supportLevel: Math.round(supportLevel * 100) / 100,
@@ -1181,8 +1218,12 @@ export async function scanForSetups(userId?: string) {
           relativeStrengthRatio: Math.round(relativeStrengthRatio * 10000) / 10000,
           hasBullishFVG: false,
           bullishFVGPrice: 0,
-          isSMAPullback: priceNearSMA50,
+          isSMAPullback: false,
           sma50Price: Math.round(sma50 * 100) / 100,
+          isEMA20Pullback: isEMA20Pullback,
+          ema20Price: Math.round(ema20 * 100) / 100,
+          isEMA50Pullback: isEMA50Pullback,
+          ema50Price: Math.round(ema50 * 100) / 100,
           supplyZone: sdZones.supplyZone,
           demandZone: sdZones.demandZone,
           avgVolume20d: Math.round(avgVol20),
@@ -1209,6 +1250,17 @@ export async function scanForSetups(userId?: string) {
       if (aBlocked !== bBlocked) return aBlocked - bBlocked;
       return b.relativeStrengthRatio - a.relativeStrengthRatio;
     });
+
+    // Detailed Verbose Scan Log - exactly same for everyone and persisted in Firestore globalState
+    addLog(
+      "INFO",
+      `[SCAN METRICS VERBOSITY] Evaluated ${evaluatedCount} premium leader constituents:\n` +
+      `  • 200 SMA Bullish Gatekeeper: Passed ${evaluatedCount - failedSMA200Count}/${evaluatedCount} (Failed: ${failedSMA200List.length > 0 ? failedSMA200List.join(", ") : "None"})\n` +
+      `  • Trend Alignment check (50 SMA > 200 SMA): Passed ${evaluatedCount - failedSMA200Count - failedSma50Count}/${evaluatedCount - failedSMA200Count} (Failed: ${failedSma50List.length > 0 ? failedSma50List.join(", ") : "None"})\n` +
+      `  • 52W High Pullback Constraint (5%-35% dip): Passed ${evaluatedCount - failedSMA200Count - failedSma50Count - failedPullbackCount}/${evaluatedCount - failedSMA200Count - failedSma50Count} (Failed: ${failedPullbackList.length > 0 ? failedPullbackList.join(", ") : "None"})\n` +
+      `  • Technical Support trigger (touched 20/50 EMA band): Passed ${proposedSetups.length}/${evaluatedCount - failedSMA200Count - failedSma50Count - failedPullbackCount} (Failed: ${failedEMAPullbackList.length > 0 ? failedEMAPullbackList.join(", ") : "None"})\n` +
+      `  • Qualified Setups: ${proposedSetups.length} candidates` 
+    );
 
     addLog("SUCCESS", `Screener scan completed! Found ${scannedSetups.length} setup proposals.`);
     botState.lastScanTime = new Date().toISOString();
@@ -1433,7 +1485,13 @@ export async function deployPortfolio(symbol: string, userId?: string): Promise<
     const supportLevel = Math.round((entryPrice * 0.95 || livePrice * 0.95) * 100) / 100;
 
     // Set target profit to exit at the resistance zone (supplyZone)
-    const targetPrice = proposal.supplyZone && proposal.supplyZone > 0 ? proposal.supplyZone : (proposal.targetPrice || Math.round(entryPrice * 1.1 * 100) / 100);
+    // If the supply zone is less than or equal to the entry price (meaning we are at All-Time Highs or breaking out),
+    // we set a default 10% profit target to prevent instant exits.
+    const targetPrice = (proposal.supplyZone && proposal.supplyZone > entryPrice)
+      ? proposal.supplyZone
+      : (proposal.targetPrice && proposal.targetPrice > entryPrice)
+        ? proposal.targetPrice
+        : Math.round(entryPrice * 1.1 * 100) / 100;
 
     let users: UserCredentials[] = [];
     if (userId) {
@@ -1966,10 +2024,23 @@ export function restartCronEngine() {
     addLog("INFO", "Schedules activated for daily scans at 9:30 AM, 11:00 AM, 1:00 PM, and 4:00 PM Eastern Time for premium swing trades.");
     botState.isActive = true;
 
-    // Run first scan immediately
-    setTimeout(() => {
-      runContinuousBotCycle();
-    }, 100);
+    // Self-healing: Catch-up check on container wake-up or server boots in Cloud Run
+    const now = Date.now();
+    const lastScan = botState.lastScanTime ? new Date(botState.lastScanTime).getTime() : 0;
+    const intervalMs = botConfig.scanIntervalMinutes * 60 * 1000;
+    const shouldCatchUp = (now - lastScan) >= intervalMs;
+
+    if (shouldCatchUp) {
+      addLog("INFO", `[SELF-HEALING] Missed scheduled scans detected due to server container standby (Last scan: ${botState.lastScanTime || "None"}). Triggering immediate catch-up scan cycle...`);
+      setTimeout(() => {
+        runContinuousBotCycle();
+      }, 500);
+    } else {
+      // Run first scan immediately if not missed
+      setTimeout(() => {
+        runContinuousBotCycle();
+      }, 100);
+    }
 
     backgroundIntervalId = setInterval(() => {
       runContinuousBotCycle();

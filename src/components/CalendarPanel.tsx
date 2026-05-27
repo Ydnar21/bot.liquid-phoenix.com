@@ -48,6 +48,8 @@ export default function CalendarPanel({ events = [] }: CalendarPanelProps) {
         return "bg-sky-500/10 border-sky-500/20 text-sky-400";
       case "CATALYST":
         return "bg-emerald-500/10 border-emerald-500/20 text-emerald-400";
+      case "IPO":
+        return "bg-purple-500/10 border-purple-500/20 text-purple-400";
       default:
         return "bg-slate-500/10 border-slate-500/20 text-slate-400";
     }

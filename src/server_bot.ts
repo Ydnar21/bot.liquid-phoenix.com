@@ -67,6 +67,19 @@ export function storeEvent(
     botState.storedEvents = [];
   }
 
+  // Keep calendar news pristine: only allow IPO news and big market-related events (such as FOMC, CPI, and major macro catalysts)
+  if (source !== 'IPO' && source !== 'FOMC' && source !== 'CPI') {
+    if (source === 'CATALYST') {
+      const lowerName = eventName.toLowerCase();
+      const isMacro = lowerName.includes("payrolls") || lowerName.includes("jobs") || lowerName.includes("gdp") || lowerName.includes("fed") || lowerName.includes("inflation") || lowerName.includes("retail sales") || lowerName.includes("unemployment");
+      if (!isMacro) {
+        return; // Skip minor company catalyst events
+      }
+    } else {
+      return; // Skip minor company earnings events
+    }
+  }
+
   // Normalize YYYY-MM-DD format
   let normalizedDate = eventDate.trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDate)) {
@@ -401,6 +414,31 @@ export async function getAllUserCredentials(): Promise<UserCredentials[]> {
 }
 
 // User-specific or Fallback credentials resolver
+export async function ensureUserCredentialsLoaded(userId: string): Promise<void> {
+  if (!userId) return;
+  const creds = await resolveCredentialsForUser(userId);
+  if (creds) {
+    let changed = false;
+    if (botConfig.ALPACA_API_KEY !== creds.ALPACA_API_KEY) {
+      botConfig.ALPACA_API_KEY = creds.ALPACA_API_KEY;
+      changed = true;
+    }
+    if (botConfig.ALPACA_SECRET_KEY !== creds.ALPACA_SECRET_KEY) {
+      botConfig.ALPACA_SECRET_KEY = creds.ALPACA_SECRET_KEY;
+      changed = true;
+    }
+    if (botConfig.ALPACA_BASE_URL !== creds.ALPACA_BASE_URL) {
+      botConfig.ALPACA_BASE_URL = creds.ALPACA_BASE_URL;
+      changed = true;
+    }
+    if (changed) {
+      addLog("SUCCESS", `[CONNECTION ENGINE] Stored credentials for user ${userId} found and synced to memory cache.`);
+      saveStateToDisk();
+    }
+  }
+}
+
+// User-specific or Fallback credentials resolver
 export async function resolveCredentialsForUser(userId?: string): Promise<{ ALPACA_API_KEY: string; ALPACA_SECRET_KEY: string; ALPACA_BASE_URL: string } | null> {
   if (userId) {
     // 1. Try local offline fallback backup file
@@ -438,7 +476,13 @@ export async function resolveCredentialsForUser(userId?: string): Promise<{ ALPA
         }
       }
     } catch (e: any) {
-      console.warn(`resolveCredentialsForUser Firestore lookup error: ${e.message}`);
+      const msg = e?.message || "";
+      if (msg.includes("PERMISSION_DENIED") || msg.includes("Missing or insufficient permissions") || msg.includes("Error 7") || msg.includes("7 PERMISSION_DENIED")) {
+        // Silent lookup fallback block
+        console.info(`[Firebase Server] Direct lookup bypassed for user ${userId} (relying on secure authenticated client-side sync).`);
+      } else {
+        console.warn(`resolveCredentialsForUser Firestore lookup error: ${e.message}`);
+      }
     }
   }
 
@@ -589,13 +633,6 @@ export async function getUserAccount(userId: string): Promise<any> {
         console.warn(`Could not load user-specific credentials for ${userId} from Firestore: ${err.message}. Checking master config fallback...`);
       }
     }
-  }
-
-  // Auto-connect if credentials exist for the user
-  if (creds && !botConfig.isConnectionActive) {
-    botConfig.isConnectionActive = true;
-    addLog("SUCCESS", `[CONNECTION ENGINE] Saved credentials detected for user ${userId}. Connection channel automatically activated.`);
-    saveStateToDisk();
   }
 
   if (!botConfig.isConnectionActive && !botConfig.isBotRunning) {
@@ -1018,18 +1055,20 @@ async function checkFOMCBlackout() {
 
     const currentDate = new Date().toISOString().split("T")[0];
     const prompt = `Classify if today (${currentDate}) is within 2 trading days OF an upcoming Federal Reserve FOMC interest rate decision or a major US CPI inflation release. Also, look up and find the exact calendar dates of the next upcoming FOMC interest rate decision and the next upcoming major US CPI release.
-    Additionally, look up and locate key upcoming Initial Public Offerings (IPOs) scheduled for the current or upcoming weeks.
+    Additionally, look up and locate key upcoming Initial Public Offerings (IPOs) and big market-related events (e.g., Non-Farm Payrolls reports, GDP releases, Federal Reserve Chair speeches, major retail sales reports) scheduled for the current or upcoming weeks.
+    
+    Make sure ALL upcoming events are focused strictly on IPO listings/news and major global market-moving news/releases. Avoid minor individual stock events unless they are significant upcoming IPOs.
     Format your response exactly as this JSON object structure:
     {
       "fomcBlackout": boolean,
       "details": "A brief explanation of dates found or closest event",
       "upcomingEvents": [
         {
-          "type": "FOMC" or "CPI" or "IPO",
-          "eventName": "Federal Reserve Rate Decision", "US CPI Inflation Release", or "[Company Name] IPO Listing",
+          "type": "FOMC" or "CPI" or "IPO" or "CATALYST",
+          "eventName": "Federal Reserve Rate Decision", "US CPI Inflation Release", "[Company Name] IPO Listing", or "US Non-Farm Payrolls Report",
           "eventDate": "YYYY-MM-DD",
-          "symbol": "Optional ticker symbol if available for IPO",
-          "details": "Brief context about the event, expected price range or relevance"
+          "symbol": "Optional ticker symbol if available for IPO, otherwise omit",
+          "details": "Brief context about the event, expected price/relevance or IPO range"
         }
       ]
     }`;
@@ -2076,38 +2115,24 @@ async function runContinuousBotCycle() {
 
   if (!currentlyOpen) {
     if (wasMarketOpenLastKnown) {
-      addLog("WARNING", "US Market is currently CLOSED (Standard of premarket & core). Automated scanning and position evaluation suspended to conserve resource footprint.");
+      addLog("INFO", "[BACKGROUND HEARTBEAT] US Market is CLOSED. However, active-duty background scanning loops will remain running 24/7 to find swing-trading setup candidates.");
       wasMarketOpenLastKnown = false;
     }
-    
-    // Explicitly declare high visibility status so the user knows everything is healthy and running 24/7 in the background
-    const activeDetails = activePosition 
-      ? `Active stock tracker safely holding ${activePosition.qty} shares of ${activePosition.symbol} (status monitored & secured).` 
-      : `All positions flat. Ready to scan for premium setups when market pre-opening hours resume.`;
-
-    addLog("INFO", `[BACKGROUND HEARTBEAT] 24/7 background scheduler is alive and healthy. US Market is CLOSED. Suspended active stock scans & API requests to bypass redundant trade rate-limits. ${activeDetails} Next background evaluation in ${botConfig.scanIntervalMinutes} minutes.`);
-
-    botState.lastScanTime = new Date().toISOString();
-    if (botConfig.isBotRunning) {
-      botState.nextScanTime = new Date(Date.now() + botConfig.scanIntervalMinutes * 60 * 1000).toISOString();
+  } else {
+    if (!wasMarketOpenLastKnown) {
+      addLog("SUCCESS", "US Market has OPENED (Premarket or Core session). Restoring active-hours rapid updates.");
+      wasMarketOpenLastKnown = true;
     }
-    saveStateToDisk();
-    return;
   }
 
-  if (!wasMarketOpenLastKnown) {
-    addLog("SUCCESS", "US Market has OPENED (Premarket or Core session). Restoring active autonomous AI scanner and tracking loops.");
-    wasMarketOpenLastKnown = true;
-  }
-
-  addLog("INFO", "Executing autonomous background state evaluation cycle...");
+  addLog("INFO", `Executing unified background evaluation cycle${currentlyOpen ? "" : " (Market Closed Session)"}...`);
 
   try {
-    // 1. Evaluate positions if open
+    // 1. Evaluate positions if open (runs even when closed to track stop losses based on post/pre-market close)
     if (activePosition) {
       await evaluateActivePosition();
     } else {
-      // 2. Scan for proposals if there are no open positions
+      // 2. Scan for proposals if there are no active positions
       await scanForSetups();
     }
   } catch (err: any) {

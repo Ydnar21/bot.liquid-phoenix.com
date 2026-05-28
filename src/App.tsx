@@ -10,7 +10,7 @@ import LogsConsole from "./components/LogsConsole";
 import PerformanceHistory from "./components/PerformanceHistory";
 import { auth, googleProvider, signInWithPopup, signOut, db, switchToDefaultClientDb } from "./firebase";
 import { onAuthStateChanged, User } from "firebase/auth";
-import { doc, setDoc } from "firebase/firestore";
+import { doc, setDoc, getDoc } from "firebase/firestore";
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -101,6 +101,56 @@ export default function App() {
             }
           }
         }
+
+        // Load secure private credentials from Firestore using the user authenticated client context
+        // and sync them to the server-side to guarantee seamless 24/7 background connections
+        try {
+          const credRef = doc(db, "users", u.uid, "private", "credentials");
+          const snap = await getDoc(credRef);
+          if (snap.exists()) {
+            const data = snap.data();
+            if (data.ALPACA_API_KEY && data.ALPACA_SECRET_KEY) {
+              await fetch("/api/save-credentials", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  userId: u.uid,
+                  ALPACA_API_KEY: data.ALPACA_API_KEY,
+                  ALPACA_SECRET_KEY: data.ALPACA_SECRET_KEY,
+                  ALPACA_BASE_URL: data.ALPACA_BASE_URL || "https://paper-api.alpaca.markets",
+                }),
+              });
+              console.log("[App] Stored credentials fetched from Firestore and synced to the secure server session.");
+            }
+          }
+        } catch (credErr: any) {
+          console.warn("[App] Stored credentials direct fetch error:", credErr.message);
+          if (credErr.message && (credErr.message.toLowerCase().includes("not-found") || credErr.message.toLowerCase().includes("database") || credErr.message.toLowerCase().includes("not_found"))) {
+            try {
+              switchToDefaultClientDb();
+              const credRef = doc(db, "users", u.uid, "private", "credentials");
+              const snap = await getDoc(credRef);
+              if (snap.exists()) {
+                const data = snap.data();
+                if (data.ALPACA_API_KEY && data.ALPACA_SECRET_KEY) {
+                  await fetch("/api/save-credentials", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      userId: u.uid,
+                      ALPACA_API_KEY: data.ALPACA_API_KEY,
+                      ALPACA_SECRET_KEY: data.ALPACA_SECRET_KEY,
+                      ALPACA_BASE_URL: data.ALPACA_BASE_URL || "https://paper-api.alpaca.markets",
+                    }),
+                  });
+                  console.log("[App] Stored credentials successfully synced to default database fallback");
+                }
+              }
+            } catch (retryCredErr: any) {
+              console.error("[App] Stored credentials sync fallback error:", retryCredErr.message);
+            }
+          }
+        }
       } else {
         setUser(null);
       }
@@ -140,15 +190,16 @@ export default function App() {
   // API Call Fetchers
   const fetchAllStates = async () => {
     if (!auth.currentUser) return; // Secure state fetch guard
+    const uid = auth.currentUser.uid;
     try {
       const [configRes, stateRes, posRes, histRes, setupsRes, logsRes, accountRes] = await Promise.all([
-        safeFetchJson<BotConfig>("/api/config", config),
-        safeFetchJson<BotState>("/api/state", botState),
-        safeFetchJson<ActivePosition | null>("/api/position", position),
-        safeFetchJson<ClosedTrade[]>("/api/history", history),
-        safeFetchJson<StockSetup[]>("/api/setups", setups),
-        safeFetchJson<BotLog[]>("/api/logs", logs),
-        safeFetchJson<any>(`/api/account?userId=${auth.currentUser.uid}`, alpacaAccount || { status: "unconfigured" }),
+        safeFetchJson<BotConfig>(`/api/config?userId=${uid}`, config),
+        safeFetchJson<BotState>(`/api/state?userId=${uid}`, botState),
+        safeFetchJson<ActivePosition | null>(`/api/position?userId=${uid}`, position),
+        safeFetchJson<ClosedTrade[]>(`/api/history?userId=${uid}`, history),
+        safeFetchJson<StockSetup[]>(`/api/setups?userId=${uid}`, setups),
+        safeFetchJson<BotLog[]>(`/api/logs?userId=${uid}`, logs),
+        safeFetchJson<any>(`/api/account?userId=${uid}`, alpacaAccount || { status: "unconfigured" }),
       ]);
 
       setConfig(configRes);
@@ -158,6 +209,32 @@ export default function App() {
       setSetups(setupsRes);
       setLogs(logsRes);
       setAlpacaAccount(accountRes);
+
+      // Self-healing Watchdog: If the server restarted/scaled-down and lost running/connection states,
+      // but this client browser remembers that the bot was active, heal the server state immediately!
+      const rememberedBotRunning = localStorage.getItem("bot_running_v1") === "true";
+      const rememberedConnectionActive = localStorage.getItem("connection_active_v1") === "true";
+      
+      let needsStateCorrection = false;
+      const correctionPayload: Record<string, boolean> = {};
+
+      if (rememberedBotRunning && !configRes.isBotRunning) {
+        correctionPayload.isBotRunning = true;
+        needsStateCorrection = true;
+      }
+      if (rememberedConnectionActive && !configRes.isConnectionActive) {
+        correctionPayload.isConnectionActive = true;
+        needsStateCorrection = true;
+      }
+
+      if (needsStateCorrection) {
+        console.info("[Watchdog] Server restart detected. Restoring intended active states to server:", correctionPayload);
+        await fetch(`/api/config?userId=${uid}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(correctionPayload),
+        });
+      }
     } catch (err: any) {
       const errMsg = (err instanceof Error ? err.message : String(err)) || "";
       const lowerMsg = errMsg.toLowerCase();
@@ -187,8 +264,9 @@ export default function App() {
   }, [user]);
 
   const handleSaveConfig = async (updated: Partial<BotConfig>) => {
+    const uid = auth.currentUser?.uid || "";
     try {
-      const res = await fetch("/api/config", {
+      const res = await fetch(`/api/config?userId=${uid}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updated),
@@ -207,9 +285,11 @@ export default function App() {
 
   const handleToggleBot = async () => {
     const nextRunningStatus = !config.isBotRunning;
+    localStorage.setItem("bot_running_v1", String(nextRunningStatus));
+    const uid = auth.currentUser?.uid || "";
 
     try {
-      const res = await fetch("/api/config", {
+      const res = await fetch(`/api/config?userId=${uid}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ isBotRunning: nextRunningStatus }),
@@ -229,9 +309,11 @@ export default function App() {
 
   const handleToggleConnection = async () => {
     const nextConnectionStatus = !config.isConnectionActive;
+    localStorage.setItem("connection_active_v1", String(nextConnectionStatus));
+    const uid = auth.currentUser?.uid || "";
 
     try {
-      const res = await fetch("/api/config", {
+      const res = await fetch(`/api/config?userId=${uid}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ isConnectionActive: nextConnectionStatus }),
@@ -252,9 +334,10 @@ export default function App() {
   const handleTriggerScan = async () => {
     setIsScanning(true);
     triggerBanner("Starting stock universe scanner across S&P 500 + Nasdaq 100...", "success");
+    const uid = auth.currentUser?.uid || "";
 
     try {
-      const res = await fetch("/api/scan", { method: "POST" });
+      const res = await fetch(`/api/scan?userId=${uid}`, { method: "POST" });
       const data = await res.json();
       if (data.success) {
         // Await 3 seconds while server starts scan, then pull initial list
@@ -273,9 +356,10 @@ export default function App() {
   const handleDeployProposal = async (symbol: string) => {
     setIsDeploying(true);
     triggerBanner(`Initializing portfolio deployment: Buying 100% equity setup for ${symbol}...`, "success");
+    const uid = auth.currentUser?.uid || "";
 
     try {
-      const res = await fetch("/api/deploy", {
+      const res = await fetch(`/api/deploy?userId=${uid}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ symbol }),
@@ -297,9 +381,10 @@ export default function App() {
   const handleExitPosition = async (symbol: string, reason: string) => {
     setIsExiting(true);
     triggerBanner(`Transmitting sell execution order for ${symbol}...`, "success");
+    const uid = auth.currentUser?.uid || "";
 
     try {
-      const res = await fetch("/api/exit", {
+      const res = await fetch(`/api/exit?userId=${uid}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ symbol, reason }),
@@ -319,8 +404,9 @@ export default function App() {
   };
 
   const handleClearLogs = async () => {
+    const uid = auth.currentUser?.uid || "";
     try {
-      const res = await fetch("/api/clear-logs", { method: "POST" });
+      const res = await fetch(`/api/clear-logs?userId=${uid}`, { method: "POST" });
       const data = await res.json();
       if (data.success) {
         triggerBanner("System activity logs cleared.", "success");

@@ -19,6 +19,7 @@ import {
   restartCronEngine,
   addLog,
   getUserAccount,
+  ensureUserCredentialsLoaded,
 } from "./src/server_bot.js";
 
 async function startServer() {
@@ -27,6 +28,19 @@ async function startServer() {
 
   // Middleware
   app.use(express.json());
+
+  // Auto-sync user credentials to memory whenever a request includes userId
+  app.use(async (req, res, next) => {
+    const userId = (req.query.userId || req.body?.userId) as string;
+    if (userId) {
+      try {
+        await ensureUserCredentialsLoaded(userId);
+      } catch (err: any) {
+        console.warn(`[CREDENTIALS MIDDLEWARE] Auto-sync credentials failed for ${userId}:`, err.message);
+      }
+    }
+    next();
+  });
 
   // Bootstrap data on start
   await loadStateFromDisk();

@@ -1131,16 +1131,14 @@ export async function scanForSetups(userId?: string) {
 
     const proposedSetups: StockSetup[] = [];
 
-    // Detailed counters for scan verbosity
+    // Detailed counters for scan verbosity of the simplified Catalyst Momentum strategy
     let evaluatedCount = 0;
-    let failedSMA200Count = 0;
-    const failedSMA200List: string[] = [];
-    let failedSma50Count = 0;
-    const failedSma50List: string[] = [];
-    let failedPullbackCount = 0;
-    const failedPullbackList: string[] = [];
-    let failedEMAPullbackCount = 0;
-    const failedEMAPullbackList: string[] = [];
+    let failedEMAMomentumCount = 0;
+    const failedEMAMomentumList: string[] = [];
+    let failedRSIMomentumCount = 0;
+    const failedRSIMomentumList: string[] = [];
+    let failedNoCatalystCount = 0;
+    const failedNoCatalystList: string[] = [];
 
     // Loop through sector leaders list
     for (const ticker of SECTOR_LEADERS) {
@@ -1152,96 +1150,52 @@ export async function scanForSetups(userId?: string) {
         const currentPrice = bars[bars.length - 1].c;
         const currentVol = bars[bars.length - 1].v;
 
-        // Calculate moving averages
+        // Calculate moving averages and momentum metrics
         const sma200 = calculateSMA(bars, 200);
-
-        // First Check: Ensure the price is strictly above the 200 SMA (Long-term Bullish Trend Gatekeeper)
-        if (currentPrice <= sma200) {
-          failedSMA200Count++;
-          failedSMA200List.push(ticker);
-          continue;
-        }
-
         const sma50 = calculateSMA(bars, 50);
         const ema20 = calculateEMA(bars, 20);
+        const ema50 = calculateEMA(bars, 50);
 
-        // Filter Rule: 50 SMA > 200 SMA (healthy long term uptrend alignment)
-        if (sma50 <= sma200) {
-          failedSma50Count++;
-          failedSma50List.push(ticker);
-          continue;
-        }
-
-        // Filter Rule: Pullback size 5-35% off 52-week high (minimum 5% pullback)
-        const highPrices = bars.map(b => b.h);
-        const fiftyTwoWeekHigh = Math.max(...highPrices);
-        const offHighPct = ((fiftyTwoWeekHigh - currentPrice) / fiftyTwoWeekHigh) * 100;
-        if (offHighPct < 5 || offHighPct > 35) {
-          failedPullbackCount++;
-          failedPullbackList.push(`${ticker}(${offHighPct.toFixed(1)}%)`);
-          continue;
-        }
-
-        // Calculate average daily volume for downstream display
-        const avgVol20 = calculateAverageVolume(bars, 20);
-
-        // Filter Rule: RSI and Simple Swing Pullback entry triggers
+        // Get recent RSI manually
         const rsiHistory = [];
-        for (let j = 10; j >= 0; j--) {
+        for (let j = 5; j >= 0; j--) {
           const subBars = bars.slice(0, bars.length - j);
           rsiHistory.push(calculateRSI(subBars, 14));
         }
-
         const currentRSI = rsiHistory[rsiHistory.length - 1];
-        const sdZones = calculateSupplyDemandZones(bars);
-        const ema50 = calculateEMA(bars, 50);
 
-        // Define precise indicators: price within 1.5% of the respective EMA line
-        const priceNearEMA20 = currentPrice >= ema20 * 0.985 && currentPrice <= ema20 * 1.015;
-        const priceNearEMA50 = currentPrice >= ema50 * 0.985 && currentPrice <= ema50 * 1.015;
-
-        // Ensure pullbacks happen in a valid trend context (normally strong uptrend)
-        const isEMA20Pullback = priceNearEMA20 && (ema20 > sma50 && sma50 > sma200);
-        const isEMA50Pullback = priceNearEMA50 && (ema50 > sma200);
-
-        const entriesTriggered: string[] = [];
-        if (isEMA20Pullback) entriesTriggered.push("20 EMA Dip-Buy Support");
-        if (isEMA50Pullback) entriesTriggered.push("50 EMA Dip-Buy Support");
-
-        // The pullback MUST be near the 20 EMA or the 50 EMA (strict technical gatekeeper requested by user)
-        if (entriesTriggered.length === 0) {
-          failedEMAPullbackCount++;
-          failedEMAPullbackList.push(ticker);
+        // Momentum Indicator 1: Bullish Short-Term Momentum (Price strictly above the 20 EMA)
+        if (currentPrice <= ema20) {
+          failedEMAMomentumCount++;
+          failedEMAMomentumList.push(ticker);
           continue;
         }
 
-        // Volume trend (increasing institutional interest) - calculated but no longer blocking
+        // Momentum Indicator 2: Active Buying Interest (RSI-14 strictly above 50)
+        if (currentRSI <= 50) {
+          failedRSIMomentumCount++;
+          failedRSIMomentumList.push(ticker);
+          continue;
+        }
+
+        // Calculate average daily volume and key parameters for screeners
+        const avgVol20 = calculateAverageVolume(bars, 20);
         const avgVol10 = calculateAverageVolume(bars, 10);
         const avgVol30 = calculateAverageVolume(bars, 30);
         const volumeTrendRatio = avgVol10 / avgVol30;
-
-        // Entry Bar volume - calculated but no longer blocking
         const entryVolumeRatio = currentVol / avgVol20;
-
-        // Fetch fundamental metrics solely for metadata attachment on screeners (no filtering filters applied)
+        const sdZones = calculateSupplyDemandZones(bars);
         const fun = getFundamentalMetrics(ticker);
 
-        // Exit parameters calculator mapped directly to supply & demand zones
-        // Support / stop-loss: demandZone or sma200, whichever is closer to protect capital
-        const supportLevel = Math.max(sdZones.demandZone, sma200 * 0.98);
-
-        // Resistance / target exit: supplyZone (the major 30-day resistance peak)
-        // If the stock is at All-Time Highs or breaking out of its supply zone (supplyZone <= currentPrice),
-        // there is no historic overhead resistance. In this case, we set the target profit dynamically to 10% above the current price.
-        const targetPrice = sdZones.supplyZone > currentPrice 
-          ? sdZones.supplyZone 
-          : Math.round(currentPrice * 1.1 * 100) / 100;
+        // Define stop-loss floor and dynamic target profit margins
+        const supportLevel = Math.max(ema20 * 0.96, sma200 * 0.97);
+        const targetPrice = Math.max(sdZones.supplyZone, currentPrice * 1.12);
 
         // Relative Strength vs SPY (falling less than spy over past 10 bars)
         const stockReturn10 = (currentPrice - bars[bars.length - 11].c) / bars[bars.length - 11].c;
         const relativeStrengthRatio = stockReturn10 - spyReturn10; // Positive means beat SPY
 
-        // We have a strong candidate! Let's build a proposal and verify with Gemini
+        // We have a strong momentum setup candidate!
         proposedSetups.push({
           symbol: ticker,
           companyName: getCompanyName(ticker),
@@ -1256,13 +1210,13 @@ export async function scanForSetups(userId?: string) {
           debtToEquity: fun.debtToEquity,
           fcfPositive: fun.fcfPositive,
           marketCapBillion: fun.marketCapBillion,
-          reason: `Technical swing qualifiers verified. Buy trigger details: ${entriesTriggered.join(" & ")}.`,
+          reason: `Catalyst Momentum: Price > 20 EMA & RSI > 50.`,
           volumeTrendRatio: Math.round(volumeTrendRatio * 100) / 100,
           entryVolumeRatio: Math.round(entryVolumeRatio * 100) / 100,
           supportLevel: Math.round(supportLevel * 100) / 100,
           targetPrice: Math.round(targetPrice * 100) / 100,
           sentimentScore: 0,
-          sentimentReason: "To be evaluated by Gemini news agent",
+          sentimentReason: "Evaluating upcoming news catalysts...",
           blockersFound: [],
           catalystEvent: "Dynamic event window",
           catalystDate: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
@@ -1271,9 +1225,9 @@ export async function scanForSetups(userId?: string) {
           bullishFVGPrice: 0,
           isSMAPullback: false,
           sma50Price: Math.round(sma50 * 100) / 100,
-          isEMA20Pullback: isEMA20Pullback,
+          isEMA20Pullback: true, // Mark active momentum alignment
           ema20Price: Math.round(ema20 * 100) / 100,
-          isEMA50Pullback: isEMA50Pullback,
+          isEMA50Pullback: false,
           ema50Price: Math.round(ema50 * 100) / 100,
           supplyZone: sdZones.supplyZone,
           demandZone: sdZones.demandZone,
@@ -1286,11 +1240,25 @@ export async function scanForSetups(userId?: string) {
       }
     }
 
-    // 2. Pass setups through Gemini news agent & geopolitical filter
+    // 2. Pass setups through Gemini news agent & catalyst validator
     const evaluatedSetups: StockSetup[] = [];
     for (const setup of proposedSetups) {
       const completion = await runGeminiSentimentAgent(setup, userId);
-      evaluatedSetups.push(completion);
+
+      // Verify if the found catalyst event is scheduled within the next 14 days (2 weeks)
+      const todayStr = new Date().toISOString().split("T")[0];
+      const fourteenDaysLater = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+      const fourteenDaysLaterStr = fourteenDaysLater.toISOString().split("T")[0];
+
+      if (completion.catalystDate && completion.catalystDate >= todayStr && completion.catalystDate <= fourteenDaysLaterStr) {
+        completion.reason = `Catalyst Momentum: Verified Price > 20 EMA and RSI > 50 with upcoming ${completion.catalystEvent} on ${completion.catalystDate}.`;
+        evaluatedSetups.push(completion);
+      } else {
+        // Excluded from standard catalyst radar window
+        failedNoCatalystCount++;
+        failedNoCatalystList.push(completion.symbol);
+        addLog("INFO", `[SETUP CANDIDATE] Ticker ${completion.symbol} skipped. Detected catalyst date (${completion.catalystDate || "none found"}) lies beyond the desired 2-week active momentum radar window.`);
+      }
     }
 
     // Sort setup Proposals so that relative strength / sentiment leaders are at the top!
@@ -1306,11 +1274,10 @@ export async function scanForSetups(userId?: string) {
     addLog(
       "INFO",
       `[SCAN METRICS VERBOSITY] Evaluated ${evaluatedCount} premium leader constituents:\n` +
-      `  • 200 SMA Bullish Gatekeeper: Passed ${evaluatedCount - failedSMA200Count}/${evaluatedCount} (Failed: ${failedSMA200List.length > 0 ? failedSMA200List.join(", ") : "None"})\n` +
-      `  • Trend Alignment check (50 SMA > 200 SMA): Passed ${evaluatedCount - failedSMA200Count - failedSma50Count}/${evaluatedCount - failedSMA200Count} (Failed: ${failedSma50List.length > 0 ? failedSma50List.join(", ") : "None"})\n` +
-      `  • 52W High Pullback Constraint (5%-35% dip): Passed ${evaluatedCount - failedSMA200Count - failedSma50Count - failedPullbackCount}/${evaluatedCount - failedSMA200Count - failedSma50Count} (Failed: ${failedPullbackList.length > 0 ? failedPullbackList.join(", ") : "None"})\n` +
-      `  • Technical Support trigger (touched 20/50 EMA band): Passed ${proposedSetups.length}/${evaluatedCount - failedSMA200Count - failedSma50Count - failedPullbackCount} (Failed: ${failedEMAPullbackList.length > 0 ? failedEMAPullbackList.join(", ") : "None"})\n` +
-      `  • Qualified Setups: ${proposedSetups.length} candidates` 
+      `  • Price above 20 EMA (Short-term momentum): Passed ${evaluatedCount - failedEMAMomentumCount}/${evaluatedCount} (Failed: ${failedEMAMomentumList.length > 0 ? failedEMAMomentumList.join(", ") : "None"})\n` +
+      `  • RSI > 50 (Relative strength buying momentum): Passed ${evaluatedCount - failedEMAMomentumCount - failedRSIMomentumCount}/${evaluatedCount - failedEMAMomentumCount} (Failed: ${failedRSIMomentumList.length > 0 ? failedRSIMomentumList.join(", ") : "None"})\n` +
+      `  • Catalyst scheduled within 14 days: Passed ${evaluatedSetups.length}/${proposedSetups.length} (Failed/No immediate catalyst: ${failedNoCatalystList.length > 0 ? failedNoCatalystList.join(", ") : "None"})\n` +
+      `  • Qualified Setups: ${evaluatedSetups.length} active candidate(s)`
     );
 
     addLog("SUCCESS", `Screener scan completed! Found ${scannedSetups.length} setup proposals.`);
@@ -1320,21 +1287,21 @@ export async function scanForSetups(userId?: string) {
 
     // 3. Autonomous Trade Trigger Action:
     // If bot task scheduler is active and we don't have an open activePosition, automatically analyze 
-    // and deploy the setup with the absolute largest pullback potential upside based on supply/demand zones.
+    // and deploy the setup with the absolute largest momentum upside potential.
     if (botConfig.isBotRunning && !activePosition && scannedSetups.length > 0) {
       const eligibleSetups = scannedSetups.filter(s => s.blockersFound.length === 0);
       if (eligibleSetups.length > 0) {
         const sortedByUpside = [...eligibleSetups].sort((a, b) => {
-          const upsideA = a.demandZone && a.demandZone > 0 ? ((a.supplyZone - a.demandZone) / a.demandZone) : 0;
-          const upsideB = b.demandZone && b.demandZone > 0 ? ((b.supplyZone - b.demandZone) / b.demandZone) : 0;
+          const upsideA = a.price && a.price > 0 ? ((a.targetPrice - a.price) / a.price) : 0;
+          const upsideB = b.price && b.price > 0 ? ((b.targetPrice - b.price) / b.price) : 0;
           return upsideB - upsideA;
         });
 
         const bestSetup = sortedByUpside[0];
-        const upsidePct = bestSetup.demandZone && bestSetup.demandZone > 0 ? ((bestSetup.supplyZone - bestSetup.demandZone) / bestSetup.demandZone) * 100 : 0;
+        const upsidePct = bestSetup.price && bestSetup.price > 0 ? ((bestSetup.targetPrice - bestSetup.price) / bestSetup.price) * 100 : 0;
 
-        addLog("SUCCESS", `[AUTONOMOUS TRADER] Identified ${bestSetup.symbol} with highest S&D zone upside potential of +${upsidePct.toFixed(2)}% (Demand: $${bestSetup.demandZone}, Supply: $${bestSetup.supplyZone}).`);
-        addLog("INFO", `[AUTONOMOUS TRADER] Automatically placing limit buy order exactly at the pullback demand zone price: $${bestSetup.demandZone.toFixed(2)}.`);
+        addLog("SUCCESS", `[AUTONOMOUS TRADER] Identified ${bestSetup.symbol} with highest catalyst momentum upside potential of +${upsidePct.toFixed(2)}% (Target: $${bestSetup.targetPrice.toFixed(2)}, Entry: $${bestSetup.price.toFixed(2)}).`);
+        addLog("INFO", `[AUTONOMOUS TRADER] Automatically placing momentum buy order exactly at the current price: $${bestSetup.price.toFixed(2)}.`);
         
         await deployPortfolio(bestSetup.symbol);
       } else {
@@ -1529,20 +1496,12 @@ export async function deployPortfolio(symbol: string, userId?: string): Promise<
       const bars = await fetchAlpacaBars(symbol, 5, userId);
       livePrice = bars.length > 0 ? bars[bars.length - 1].c : proposal.price;
     }
-    // Enter exactly at the demand/support zone price with a limit buy order
-    const entryPrice = proposal.demandZone && proposal.demandZone > 0 ? proposal.demandZone : livePrice;
+    // Enter at the current market price to catch active momentum immediately around the catalyst
+    const entryPrice = livePrice;
 
-    // Set stop loss at the next demand zone below (using 5% below entry support as a lower safety floor)
-    const supportLevel = Math.round((entryPrice * 0.95 || livePrice * 0.95) * 100) / 100;
-
-    // Set target profit to exit at the resistance zone (supplyZone)
-    // If the supply zone is less than or equal to the entry price (meaning we are at All-Time Highs or breaking out),
-    // we set a default 10% profit target to prevent instant exits.
-    const targetPrice = (proposal.supplyZone && proposal.supplyZone > entryPrice)
-      ? proposal.supplyZone
-      : (proposal.targetPrice && proposal.targetPrice > entryPrice)
-        ? proposal.targetPrice
-        : Math.round(entryPrice * 1.1 * 100) / 100;
+    // Use our predefined support level and target profit price
+    const supportLevel = proposal.supportLevel || Math.round(livePrice * 0.95 * 100) / 100;
+    const targetPrice = proposal.targetPrice || Math.round(livePrice * 1.15 * 100) / 100;
 
     let users: UserCredentials[] = [];
     if (userId) {

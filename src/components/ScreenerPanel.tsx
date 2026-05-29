@@ -127,6 +127,12 @@ export default function ScreenerPanel({
                       CATALYST: {setup.catalystDate}
                     </div>
 
+                    {setup.earningsDate && setup.earningsDate !== "N/A" && (
+                      <div className="text-[9px] bg-amber-500/10 text-amber-300 border border-amber-500/20 px-2.5 py-0.5 rounded font-mono uppercase font-bold tracking-tight">
+                        EARNINGS: {setup.earningsDate}
+                      </div>
+                    )}
+
                     <button className="text-gray-500 hover:text-white transition-colors p-1">
                       {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                     </button>
@@ -215,6 +221,11 @@ export default function ScreenerPanel({
 
                       <div className="text-[10px] font-mono text-gray-500 pt-1 uppercase">
                         Catalyst Window Scheduled: <span className="text-amber-300 font-bold">{setup.catalystEvent}</span> on <span className="text-white font-bold">{setup.catalystDate}</span>
+                        {setup.earningsDate && setup.earningsDate !== "N/A" && (
+                          <span className="block mt-1">
+                            Upcoming Earnings Release: <span className="text-amber-300 font-bold">{setup.earningsDate}</span>
+                          </span>
+                        )}
                       </div>
                     </div>
 

@@ -35,6 +35,7 @@ export interface StockSetup {
   catalystEvent: string;
   catalystDate: string;
   relativeStrengthRatio: number; // vs SPY
+  earningsDate?: string;
   hasBullishFVG?: boolean;
   bullishFVGPrice?: number;
   isSMAPullback?: boolean;

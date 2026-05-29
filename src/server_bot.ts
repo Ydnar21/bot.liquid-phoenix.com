@@ -1131,12 +1131,12 @@ export async function scanForSetups(userId?: string) {
 
     const proposedSetups: StockSetup[] = [];
 
-    // Detailed counters for scan verbosity of the simplified Catalyst Momentum strategy
+    // Detailed counters for scan verbosity of the Trend Pullback strategy
     let evaluatedCount = 0;
-    let failedEMAMomentumCount = 0;
-    const failedEMAMomentumList: string[] = [];
-    let failedRSIMomentumCount = 0;
-    const failedRSIMomentumList: string[] = [];
+    let failed200SMACount = 0;
+    const failed200SMAList: string[] = [];
+    let failedPullbackCount = 0;
+    const failedPullbackList: string[] = [];
     let failedNoCatalystCount = 0;
     const failedNoCatalystList: string[] = [];
 
@@ -1164,17 +1164,20 @@ export async function scanForSetups(userId?: string) {
         }
         const currentRSI = rsiHistory[rsiHistory.length - 1];
 
-        // Momentum Indicator 1: Bullish Short-Term Momentum (Price strictly above the 20 EMA)
-        if (currentPrice <= ema20) {
-          failedEMAMomentumCount++;
-          failedEMAMomentumList.push(ticker);
+        // Core Filter #1: Above 200 SMA
+        if (currentPrice <= sma200) {
+          failed200SMACount++;
+          failed200SMAList.push(ticker);
           continue;
         }
 
-        // Momentum Indicator 2: Active Buying Interest (RSI-14 strictly above 50)
-        if (currentRSI <= 50) {
-          failedRSIMomentumCount++;
-          failedRSIMomentumList.push(ticker);
+        // Core Filter #2: Price drop of more than 5% from peak (pullback size > 5%)
+        const highPrices = bars.map(b => b.h);
+        const peakPrice = Math.max(...highPrices);
+        const offPeakPct = ((peakPrice - currentPrice) / peakPrice) * 100;
+        if (offPeakPct <= 5) {
+          failedPullbackCount++;
+          failedPullbackList.push(`${ticker}(${offPeakPct.toFixed(1)}%)`);
           continue;
         }
 
@@ -1189,13 +1192,13 @@ export async function scanForSetups(userId?: string) {
 
         // Define stop-loss floor and dynamic target profit margins
         const supportLevel = Math.max(ema20 * 0.96, sma200 * 0.97);
-        const targetPrice = Math.max(sdZones.supplyZone, currentPrice * 1.12);
+        const targetPrice = Math.max(sdZones.supplyZone, currentPrice * 1.15);
 
         // Relative Strength vs SPY (falling less than spy over past 10 bars)
         const stockReturn10 = (currentPrice - bars[bars.length - 11].c) / bars[bars.length - 11].c;
         const relativeStrengthRatio = stockReturn10 - spyReturn10; // Positive means beat SPY
 
-        // We have a strong momentum setup candidate!
+        // We have a strong candidate!
         proposedSetups.push({
           symbol: ticker,
           companyName: getCompanyName(ticker),
@@ -1210,7 +1213,7 @@ export async function scanForSetups(userId?: string) {
           debtToEquity: fun.debtToEquity,
           fcfPositive: fun.fcfPositive,
           marketCapBillion: fun.marketCapBillion,
-          reason: `Catalyst Momentum: Price > 20 EMA & RSI > 50.`,
+          reason: `Trend Pullback: Price above 200 SMA with ${offPeakPct.toFixed(1)}% price drop off Peak.`,
           volumeTrendRatio: Math.round(volumeTrendRatio * 100) / 100,
           entryVolumeRatio: Math.round(entryVolumeRatio * 100) / 100,
           supportLevel: Math.round(supportLevel * 100) / 100,
@@ -1220,12 +1223,13 @@ export async function scanForSetups(userId?: string) {
           blockersFound: [],
           catalystEvent: "Dynamic event window",
           catalystDate: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+          earningsDate: "N/A",
           relativeStrengthRatio: Math.round(relativeStrengthRatio * 10000) / 10000,
           hasBullishFVG: false,
           bullishFVGPrice: 0,
-          isSMAPullback: false,
+          isSMAPullback: offPeakPct > 10,
           sma50Price: Math.round(sma50 * 100) / 100,
-          isEMA20Pullback: true, // Mark active momentum alignment
+          isEMA20Pullback: offPeakPct > 5, // Mark active pullback alignment
           ema20Price: Math.round(ema20 * 100) / 100,
           isEMA50Pullback: false,
           ema50Price: Math.round(ema50 * 100) / 100,
@@ -1251,7 +1255,7 @@ export async function scanForSetups(userId?: string) {
       const fourteenDaysLaterStr = fourteenDaysLater.toISOString().split("T")[0];
 
       if (completion.catalystDate && completion.catalystDate >= todayStr && completion.catalystDate <= fourteenDaysLaterStr) {
-        completion.reason = `Catalyst Momentum: Verified Price > 20 EMA and RSI > 50 with upcoming ${completion.catalystEvent} on ${completion.catalystDate}.`;
+        completion.reason = `Catalyst Pullback: Price above 200 SMA with a pullback of more than 5% and upcoming ${completion.catalystEvent} on ${completion.catalystDate}.`;
         evaluatedSetups.push(completion);
       } else {
         // Excluded from standard catalyst radar window
@@ -1274,8 +1278,8 @@ export async function scanForSetups(userId?: string) {
     addLog(
       "INFO",
       `[SCAN METRICS VERBOSITY] Evaluated ${evaluatedCount} premium leader constituents:\n` +
-      `  • Price above 20 EMA (Short-term momentum): Passed ${evaluatedCount - failedEMAMomentumCount}/${evaluatedCount} (Failed: ${failedEMAMomentumList.length > 0 ? failedEMAMomentumList.join(", ") : "None"})\n` +
-      `  • RSI > 50 (Relative strength buying momentum): Passed ${evaluatedCount - failedEMAMomentumCount - failedRSIMomentumCount}/${evaluatedCount - failedEMAMomentumCount} (Failed: ${failedRSIMomentumList.length > 0 ? failedRSIMomentumList.join(", ") : "None"})\n` +
+      `  • Price above 200 SMA: Passed ${evaluatedCount - failed200SMACount}/${evaluatedCount} (Failed: ${failed200SMAList.length > 0 ? failed200SMAList.join(", ") : "None"})\n` +
+      `  • Price drop off Peak > 5%: Passed ${evaluatedCount - failed200SMACount - failedPullbackCount}/${evaluatedCount - failed200SMACount} (Failed: ${failedPullbackList.length > 0 ? failedPullbackList.join(", ") : "None"})\n` +
       `  • Catalyst scheduled within 14 days: Passed ${evaluatedSetups.length}/${proposedSetups.length} (Failed/No immediate catalyst: ${failedNoCatalystList.length > 0 ? failedNoCatalystList.join(", ") : "None"})\n` +
       `  • Qualified Setups: ${evaluatedSetups.length} active candidate(s)`
     );
@@ -1423,6 +1427,7 @@ async function runGeminiSentimentAgent(setup: StockSetup, userId?: string): Prom
     setup.blockersFound = parsed.blockersFound ?? [];
     setup.catalystEvent = parsed.catalystEvent ?? "Product Launch rumour cycle";
     setup.catalystDate = parsed.catalystDate ?? setup.catalystDate;
+    setup.earningsDate = parsed.estimatedEarningsDate ?? "N/A";
 
     // Persist discovered events to memory/disk calendar store
     if (setup.catalystDate && setup.catalystEvent && /^\d{4}-\d{2}-\d{2}$/.test(setup.catalystDate)) {

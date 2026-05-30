@@ -120,6 +120,41 @@ export function storeEvent(
   purgePassedEvents();
 }
 
+export function cleanAndParseJSON(rawText: string): any {
+  let cleaned = rawText.trim();
+  
+  // Remove markdown codeblock wrappers if present
+  if (cleaned.startsWith("```json")) {
+    cleaned = cleaned.substring(7);
+  } else if (cleaned.startsWith("```")) {
+    cleaned = cleaned.substring(3);
+  }
+  if (cleaned.endsWith("```")) {
+    cleaned = cleaned.substring(0, cleaned.length - 3);
+  }
+  cleaned = cleaned.trim();
+
+  // Find first '{' or '[' and last '}' or ']' to isolate the JSON payload
+  const firstBrace = cleaned.indexOf("{");
+  const firstBracket = cleaned.indexOf("[");
+  let startIdx = -1;
+  let endIdx = -1;
+
+  if (firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
+    startIdx = firstBrace;
+    endIdx = cleaned.lastIndexOf("}");
+  } else if (firstBracket !== -1) {
+    startIdx = firstBracket;
+    endIdx = cleaned.lastIndexOf("]");
+  }
+
+  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+    cleaned = cleaned.substring(startIdx, endIdx + 1);
+  }
+
+  return JSON.parse(cleaned);
+}
+
 export function purgePassedEvents() {
   if (!botState.storedEvents) {
     botState.storedEvents = [];
@@ -1058,16 +1093,27 @@ async function checkFOMCBlackout() {
     Additionally, look up and locate key upcoming Initial Public Offerings (IPOs) and big market-related events (e.g., Non-Farm Payrolls reports, GDP releases, Federal Reserve Chair speeches, major retail sales reports) scheduled for the current or upcoming weeks.
     
     Make sure ALL upcoming events are focused strictly on IPO listings/news and major global market-moving news/releases. Avoid minor individual stock events unless they are significant upcoming IPOs.
-    Format your response exactly as this JSON object structure:
+    
+    Instructions for JSON properties:
+    - "fomcBlackout": boolean representing if today is within 2 trading days of FOMC or CPI.
+    - "details": description of FOMC/CPI calendar dates found or closest event.
+    - "upcomingEvents": array of event objects.
+    - In "upcomingEvents", the "type" key must be EXACTLY ONE OF: "FOMC", "CPI", "IPO", or "CATALYST".
+    - In "upcomingEvents", the "eventName" key must be a single string for example: "Federal Reserve Rate Decision", "US CPI Inflation Release", "IPO Listing", or "US Non-Farm Payrolls Report".
+    - In "upcomingEvents", the "eventDate" key must be a string in "YYYY-MM-DD" format.
+    - In "upcomingEvents", the "symbol" key must be the ticker symbol if available, otherwise omit or use "" (empty string).
+    - In "upcomingEvents", the "details" key is a brief text context about the event.
+
+    Format your response EXACTLY as this JSON object structure (it must be syntactically valid JSON):
     {
-      "fomcBlackout": boolean,
+      "fomcBlackout": false,
       "details": "A brief explanation of dates found or closest event",
       "upcomingEvents": [
         {
-          "type": "FOMC" or "CPI" or "IPO" or "CATALYST",
-          "eventName": "Federal Reserve Rate Decision", "US CPI Inflation Release", "[Company Name] IPO Listing", or "US Non-Farm Payrolls Report",
-          "eventDate": "YYYY-MM-DD",
-          "symbol": "Optional ticker symbol if available for IPO, otherwise omit",
+          "type": "FOMC",
+          "eventName": "Federal Reserve Rate Decision",
+          "eventDate": "2026-06-15",
+          "symbol": "",
           "details": "Brief context about the event, expected price/relevance or IPO range"
         }
       ]
@@ -1084,7 +1130,7 @@ async function checkFOMCBlackout() {
     });
 
     const text = response.text || "";
-    const parsed = JSON.parse(text.trim());
+    const parsed = cleanAndParseJSON(text);
     botState.fomcBlackout = !!parsed.fomcBlackout;
     botState.fomcDetails = parsed.details || "None identified";
 
@@ -1402,14 +1448,22 @@ async function runGeminiSentimentAgent(setup: StockSetup, userId?: string): Prom
 
     Find any specific catalyst event scheduled within the next 14 days (e.g. key product launches, developer conferences, investor days, government contract hearings, etc.). Also check their estimated earnings date.
 
-    Format your output exactly as a JSON object:
+    Instructions for JSON properties:
+    - "sentimentScore": a number/float between -1.0 (highly negative) and +1.0 (highly positive).
+    - "sentimentReason": a detailed 2-sentence summary of recent headlines, overall market mood, and sector trend.
+    - "blockersFound": array of strings. If clean, provide an empty array [].
+    - "catalystEvent": brief description of any immediate launch/event found, or default rumor calendar.
+    - "catalystDate": date string in "YYYY-MM-DD" format.
+    - "estimatedEarningsDate": date string in "YYYY-MM-DD" format, or a null value.
+
+    Format your output EXACTLY as this JSON object structure (it must be syntactically valid JSON):
     {
-      "sentimentScore": <float between -1.0 highly negative and +1.0 highly positive>,
+      "sentimentScore": 0.5,
       "sentimentReason": "A detailed 2-sentence summary of recent headlines, overall market mood, and sector trend",
-      "blockersFound": ["Reason for block" or leave array empty if clean],
+      "blockersFound": [],
       "catalystEvent": "Brief description of any immediate launch/event found, or default rumor calendar",
-      "catalystDate": "YYYY-MM-DD",
-      "estimatedEarningsDate": "YYYY-MM-DD" or null
+      "catalystDate": "2026-06-12",
+      "estimatedEarningsDate": "2026-06-25"
     }`;
 
     const response = await ai.models.generateContent({
@@ -1421,7 +1475,7 @@ async function runGeminiSentimentAgent(setup: StockSetup, userId?: string): Prom
       },
     });
 
-    const parsed = JSON.parse(response.text?.trim() || "{}");
+    const parsed = cleanAndParseJSON(response.text?.trim() || "{}");
     setup.sentimentScore = parsed.sentimentScore ?? 0.0;
     setup.sentimentReason = parsed.sentimentReason ?? "Standard sentiment review executed.";
     setup.blockersFound = parsed.blockersFound ?? [];
@@ -1662,7 +1716,7 @@ async function updatePreciseDatesForPosition() {
       },
     });
 
-    const parsed = JSON.parse(response.text?.trim() || "{}");
+    const parsed = cleanAndParseJSON(response.text?.trim() || "{}");
     if (parsed.earningsDate && activePosition) {
       activePosition.earningsDate = parsed.earningsDate;
       addLog("SUCCESS", `Target Earnings Date for ${activePosition.symbol}: ${parsed.earningsDate}`);
@@ -1784,11 +1838,14 @@ async function runGeminiRiskReevaluation() {
     - Macro systemic trends
     - Specific news events / catastrophic business failures.
 
-    Provide a concise risk review, and explicitly set the recommendedAction to 'HOLD' or 'SELL'.
-    Format your output exactly as this JSON object structure:
+    Instructions for properties:
+    - "aiCommentary": A highly precise 2-sentence rationale outlining current headlines, technical recovery likelihood, or structural breakdown warnings.
+    - "recommendedAction": must be exactly string value "HOLD" or "SELL".
+
+    Format your output EXACTLY as this JSON object structure (it must be syntactically valid JSON):
     {
       "aiCommentary": "A highly precise 2-sentence rationale outlining current headlines, technical recovery likelihood, or structural breakdown warnings",
-      "recommendedAction": "HOLD" or "SELL"
+      "recommendedAction": "HOLD"
     }`;
 
     const response = await ai.models.generateContent({
@@ -1800,7 +1857,7 @@ async function runGeminiRiskReevaluation() {
       },
     });
 
-    const parsed = JSON.parse(response.text?.trim() || "{}");
+    const parsed = cleanAndParseJSON(response.text?.trim() || "{}");
     if (activePosition) {
       activePosition.aiCommentary = parsed.aiCommentary || "Reviewed risk factors.";
       if (parsed.recommendedAction === "SELL") {

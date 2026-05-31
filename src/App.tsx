@@ -266,6 +266,17 @@ export default function App() {
   const handleSaveConfig = async (updated: Partial<BotConfig>) => {
     const uid = auth.currentUser?.uid || "";
     try {
+      if (updated.isConnectionActive !== undefined) {
+        localStorage.setItem("connection_active_v1", String(updated.isConnectionActive));
+        if (!updated.isConnectionActive) {
+          localStorage.setItem("bot_running_v1", "false");
+          setAlpacaAccount(null);
+        }
+      }
+      if (updated.isBotRunning !== undefined) {
+        localStorage.setItem("bot_running_v1", String(updated.isBotRunning));
+      }
+
       const res = await fetch(`/api/config?userId=${uid}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -311,17 +322,27 @@ export default function App() {
     const nextConnectionStatus = !config.isConnectionActive;
     localStorage.setItem("connection_active_v1", String(nextConnectionStatus));
     const uid = auth.currentUser?.uid || "";
+    const isRobinhood = alpacaAccount?.broker === "ROBINHOOD";
 
     try {
+      const payload: Record<string, any> = { isConnectionActive: nextConnectionStatus };
+      if (!nextConnectionStatus) {
+        payload.isBotRunning = false;
+        localStorage.setItem("bot_running_v1", "false");
+        setAlpacaAccount(null);
+      }
+
       const res = await fetch(`/api/config?userId=${uid}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isConnectionActive: nextConnectionStatus }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (data.success) {
         triggerBanner(
-          nextConnectionStatus ? "Alpaca API Connection online! Dashboard updated." : "Alpaca integration disconnected.",
+          nextConnectionStatus 
+            ? (isRobinhood ? "Robinhood Broker Connection online! Agentic MCP trade sweeps activated." : "Alpaca API Connection online! Dashboard updated.") 
+            : (isRobinhood ? "Robinhood integration disconnected." : "Alpaca integration disconnected."),
           "success"
         );
         fetchAllStates();
@@ -672,7 +693,6 @@ export default function App() {
         botState={botState}
         botConfig={config}
         onToggleBot={handleToggleBot}
-        onToggleConnection={handleToggleConnection}
         onTriggerScan={handleTriggerScan}
         isScanning={isScanning}
         currentUser={user}

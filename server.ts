@@ -69,9 +69,10 @@ async function startServer() {
   });
 
   // API 2: Update configuration
-  app.post("/api/config", (req, res) => {
+  app.post("/api/config", async (req, res) => {
     const prevRunning = getBotConfig().isBotRunning;
     const body = req.body || {};
+    const userId = req.query.userId as string | undefined;
 
     // Do not overwrite obfuscated keys with stars
     const updatePayload: Record<string, any> = {};
@@ -84,7 +85,7 @@ async function startServer() {
       updatePayload[key] = val;
     }
 
-    updateBotConfig(updatePayload);
+    await updateBotConfig(updatePayload, userId);
 
     // If bot state toggled, restart cron schedules
     if (prevRunning !== getBotConfig().isBotRunning) {
@@ -96,20 +97,43 @@ async function startServer() {
 
   // API 2.5: Securely save user credentials locally as a backup fallback
   app.post("/api/save-credentials", (req, res) => {
-    const { userId, ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_BASE_URL } = req.body || {};
+    const { 
+      userId, 
+      brokerType, 
+      ALPACA_API_KEY, 
+      ALPACA_SECRET_KEY, 
+      ALPACA_BASE_URL,
+      ROBINHOOD_API_KEY,
+      ROBINHOOD_PRIVATE_KEY,
+      ROBINHOOD_ACCOUNT_NUMBER,
+      ROBINHOOD_MCP_URL,
+      GEMINI_API_KEY,
+      CLAUDE_API_KEY,
+      OPENAI_API_KEY,
+      ROBINHOOD_LLM_PROVIDER
+    } = req.body || {};
     if (!userId) {
       return res.status(400).json({ error: "Missing userId parameter" });
     }
     try {
       const filePath = path.resolve(`./private_creds_${userId}.json`);
       const payload = {
+        brokerType: brokerType || "ALPACA",
         ALPACA_API_KEY,
         ALPACA_SECRET_KEY,
         ALPACA_BASE_URL: ALPACA_BASE_URL || "https://paper-api.alpaca.markets",
+        ROBINHOOD_API_KEY,
+        ROBINHOOD_PRIVATE_KEY,
+        ROBINHOOD_ACCOUNT_NUMBER,
+        ROBINHOOD_MCP_URL: ROBINHOOD_MCP_URL || "https://agent.robinhood.com/mcp/trading",
+        GEMINI_API_KEY,
+        CLAUDE_API_KEY,
+        OPENAI_API_KEY,
+        ROBINHOOD_LLM_PROVIDER: ROBINHOOD_LLM_PROVIDER || "GEMINI",
         updatedAt: new Date().toISOString()
       };
       fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), "utf-8");
-      addLog("SUCCESS", `[CONNECTION ENGINE] Secure offline-credentials backup registered for user ${userId}.`);
+      addLog("SUCCESS", `[CONNECTION ENGINE] Secure offline-credentials backup registered for user ${userId} using ${payload.brokerType} mode.`);
       res.json({ success: true });
     } catch (err: any) {
       console.error("Failed to write offline credentials backup:", err.message);

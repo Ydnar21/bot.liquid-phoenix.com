@@ -3,6 +3,9 @@ export interface BotConfig {
   ALPACA_SECRET_KEY: string;
   ALPACA_BASE_URL: string;
   GEMINI_API_KEY: string;
+  CLAUDE_API_KEY?: string;
+  OPENAI_API_KEY?: string;
+  ROBINHOOD_LLM_PROVIDER?: "GEMINI" | "CLAUDE" | "OPENAI";
   NEWSAPI_KEY: string;
   isPaper: boolean;
   isBotRunning: boolean;

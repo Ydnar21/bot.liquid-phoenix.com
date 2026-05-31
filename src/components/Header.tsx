@@ -6,7 +6,6 @@ interface HeaderProps {
   botState: BotState;
   botConfig: BotConfig;
   onToggleBot: () => void;
-  onToggleConnection: () => void;
   onTriggerScan: () => void;
   isScanning: boolean;
   currentUser: any;
@@ -18,7 +17,6 @@ export default function Header({
   botState,
   botConfig,
   onToggleBot,
-  onToggleConnection,
   onTriggerScan,
   isScanning,
   currentUser,
@@ -107,6 +105,8 @@ export default function Header({
               ? (alpacaAccount && (alpacaAccount.status === "connected" || alpacaAccount.status === "success")
                 ? (botConfig.isBotRunning && !botState.isMarketOpen
                   ? "bg-amber-500/10 border-amber-500/30 text-amber-500"
+                  : alpacaAccount.broker === "ROBINHOOD"
+                  ? "bg-emerald-500/10 border-emerald-500/30 text-[#00c805]"
                   : "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
                 )
                 : "bg-amber-500/10 border-amber-500/30 text-amber-500")
@@ -117,6 +117,8 @@ export default function Header({
                 ? (alpacaAccount && (alpacaAccount.status === "connected" || alpacaAccount.status === "success")
                   ? (botConfig.isBotRunning && !botState.isMarketOpen
                     ? "bg-amber-500 animate-pulse"
+                    : alpacaAccount.broker === "ROBINHOOD"
+                    ? "bg-[#00c805] animate-pulse"
                     : "bg-emerald-400 animate-pulse")
                   : "bg-amber-500 animate-pulse")
                 : "bg-white/20"
@@ -126,17 +128,19 @@ export default function Header({
                 ? (botState.isMarketOpen ? "● SWING BOT ACTIVE" : "● BOT SLEEPING (MARKET CLOSED)")
                 : botConfig.isConnectionActive
                 ? (alpacaAccount && (alpacaAccount.status === "connected" || alpacaAccount.status === "success")
-                  ? "● ALPACA CONNECTED" 
-                  : "● ALPACA STANDBY")
-                : "ALPACA HOLD"}
+                  ? (alpacaAccount.broker === "ROBINHOOD" ? "● ROBINHOOD ACTIVE" : "● ALPACA CONNECTED") 
+                  : alpacaAccount?.broker === "ROBINHOOD" ? "● ROBINHOOD STANDBY" : "● ALPACA STANDBY")
+                : "● DISCONNECTED"}
             </span>
           </div>
 
           {/* Live Alpaca Account Balance & Cash Badges */}
           {isAnyActive && alpacaAccount && (alpacaAccount.status === "connected" || alpacaAccount.status === "success") && (
-            <div className="flex items-center gap-1.5 bg-theme-input border border-theme-accent/50 px-3 py-1.5 rounded text-[10px] font-mono">
-              <span className="text-gray-400 uppercase font-black">{alpacaAccount.isPaper ? "PAPER" : "LIVE"} BAL:</span>
-              <span className="text-theme-accent font-black">
+            <div className={`flex items-center gap-1.5 bg-theme-input border ${alpacaAccount.broker === "ROBINHOOD" ? "border-emerald-500/30" : "border-theme-accent/50"} px-3 py-1.5 rounded text-[10px] font-mono`}>
+              <span className="text-gray-400 uppercase font-black">
+                {alpacaAccount.broker === "ROBINHOOD" ? "MCP PORT BAL:" : alpacaAccount.isPaper ? "PAPER BAL:" : "LIVE BAL:"}
+              </span>
+              <span className={`font-black ${alpacaAccount.broker === "ROBINHOOD" ? "text-[#00c805]" : "text-theme-accent"}`}>
                 ${alpacaAccount.equity?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
               <span className="text-gray-600">|</span>
@@ -149,7 +153,7 @@ export default function Header({
 
           {isAnyActive && alpacaAccount && alpacaAccount.status === "error" && (
             <div className="flex items-center gap-1.5 bg-rose-500/10 border border-rose-500/20 px-3 py-1.5 rounded text-[10px] text-rose-400 font-bold font-mono uppercase">
-              <span>⚠️ Alpaca Access Revoked</span>
+              <span>⚠️ {alpacaAccount.broker === "ROBINHOOD" ? "Robinhood MCP Revoked" : "Alpaca Access Revoked"}</span>
             </div>
           )}
 
@@ -159,27 +163,7 @@ export default function Header({
             </div>
           )}
 
-          {/* Actions */}
-          <button
-            onClick={onToggleConnection}
-            className={`flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider px-4 py-2 rounded shadow-sm transition-all duration-150 cursor-pointer ${
-              botConfig.isConnectionActive
-                ? "bg-rose-950/40 border border-rose-800 text-rose-300 hover:bg-rose-900/40"
-                : "bg-theme-accent text-black hover:bg-orange-600"
-            }`}
-          >
-            {botConfig.isConnectionActive ? (
-              <>
-                <Pause className="w-3.5 h-3.5 fill-current" />
-                <span>Disconnect Alpaca</span>
-              </>
-            ) : (
-              <>
-                <Play className="w-3.5 h-3.5 fill-current" />
-                <span>Connect Alpaca</span>
-              </>
-            )}
-          </button>
+
 
           <button
             onClick={onToggleBot}

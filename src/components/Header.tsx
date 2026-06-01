@@ -23,7 +23,7 @@ export default function Header({
   onSignOut,
   alpacaAccount,
 }: HeaderProps) {
-  const isAnyActive = botConfig.isConnectionActive || botConfig.isBotRunning;
+  const isAnyActive = botConfig.isConnectionActive;
 
   return (
     <header className="border-b border-theme-border bg-theme-panel sticky top-0 z-50 px-6 py-4">
@@ -124,13 +124,17 @@ export default function Header({
                 : "bg-white/20"
             }`} />
             <span>
-              {botConfig.isBotRunning 
-                ? (botState.isMarketOpen ? "● SWING BOT ACTIVE" : "● BOT SLEEPING (MARKET CLOSED)")
-                : botConfig.isConnectionActive
-                ? (alpacaAccount && (alpacaAccount.status === "connected" || alpacaAccount.status === "success")
+              {!botConfig.isConnectionActive
+                ? "● DISCONNECTED"
+                : botConfig.isBotRunning
+                ? (botState.isMarketOpen 
+                  ? (alpacaAccount?.broker === "ROBINHOOD" ? "● ROBINHOOD ACTIVE (SWING BOT ACTIVE)" : "● ALPACA CONNECTED (SWING BOT ACTIVE)")
+                  : (alpacaAccount?.broker === "ROBINHOOD" ? "● ROBINHOOD ACTIVE (BOT SLEEPING)" : "● ALPACA CONNECTED (BOT SLEEPING)")
+                )
+                : (alpacaAccount && (alpacaAccount.status === "connected" || alpacaAccount.status === "success")
                   ? (alpacaAccount.broker === "ROBINHOOD" ? "● ROBINHOOD ACTIVE" : "● ALPACA CONNECTED") 
                   : alpacaAccount?.broker === "ROBINHOOD" ? "● ROBINHOOD STANDBY" : "● ALPACA STANDBY")
-                : "● DISCONNECTED"}
+              }
             </span>
           </div>
 

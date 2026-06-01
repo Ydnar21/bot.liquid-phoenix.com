@@ -25,6 +25,7 @@ function isFirestoreDatabaseError(err: any): boolean {
 }
 
 // Core State Structures
+let lastLocalUpdateTime = 0;
 let botConfig: BotConfig = {
   ALPACA_API_KEY: "",
   ALPACA_SECRET_KEY: "",
@@ -173,12 +174,53 @@ const SECTOR_LEADERS = [
   "ADBE", "PYPL", "EA", "ADI", "MELI", "CRM", "ORCL", "NOW", "AMAT", "KLAC"
 ];
 
+// Helper to mask sensitive keys and credentials in logs except for the last 4 characters/digits
+export function maskCredentialsInText(text: string): string {
+  if (!text) return text;
+
+  let maskedText = text;
+
+  // Patterns for key/secret/token assignments in log messages
+  maskedText = maskedText.replace(
+    /(key|secret|token|password|auth|pass|api_key|secret_key)\s*[:=]\s*["']?([a-zA-Z0-9_\-\*\.]{8,})["']?/gi,
+    (match, keyName, value) => {
+      // If already fully masked (e.g. contains mostly stars), return match
+      const starCount = (value.match(/\*/g) || []).length;
+      if (starCount > value.length * 0.6) {
+        return match;
+      }
+      const lastFour = value.slice(-4);
+      const maskedValue = "****************" + lastFour;
+      
+      const quoteChar = match.includes('"') ? '"' : match.includes("'") ? "'" : "";
+      const separator = match.includes(":") ? ":" : "=";
+      const parts = match.split(separator);
+      const firstPart = parts[0];
+      
+      return `${firstPart}${separator}${quoteChar}${maskedValue}${quoteChar}`;
+    }
+  );
+
+  // Standalone Gemini API keys (AIzaSy...)
+  maskedText = maskedText.replace(/\b(AIzaSy[a-zA-Z0-9_\-]{10,})\b/g, (match) => {
+    return "****************" + match.slice(-4);
+  });
+
+  // Standalone OpenAI API keys (sk-...)
+  maskedText = maskedText.replace(/\b(sk-[a-zA-Z0-9]{10,})\b/g, (match) => {
+    return "sk-*************" + match.slice(-4);
+  });
+
+  return maskedText;
+}
+
 // Helper to push logs
 export function addLog(level: "INFO" | "SUCCESS" | "WARNING" | "ERROR", message: string) {
   const timestamp = new Date().toISOString();
-  botLogs.unshift({ timestamp, level, message });
+  const maskedMessage = maskCredentialsInText(message);
+  botLogs.unshift({ timestamp, level, message: maskedMessage });
   if (botLogs.length > 300) botLogs.pop(); // Keep last 300 logs
-  console.log(`[${level}] ${timestamp}: ${message}`);
+  console.log(`[${level}] ${timestamp}: ${maskedMessage}`);
   saveStateToDisk();
 }
 
@@ -259,6 +301,10 @@ export function startFirestoreStateListener() {
     if (db && typeof db.collection === "function") {
       const unsubscribe = db.collection("globalState").doc("trading").onSnapshot((snap) => {
         if (snap && snap.exists) {
+          // Prevent race condition: Ignore Firestore updates if a local update happened very recently
+          if (Date.now() - lastLocalUpdateTime < 3000) {
+            return;
+          }
           const parsed = snap.data();
           if (parsed) {
             let configChanged = false;
@@ -695,8 +741,18 @@ export async function connectToRobinhoodMcp(
   action: "PING" | "BUY" | "SELL", 
   payload?: any
 ): Promise<any> {
-  const mcpGateway = creds.ROBINHOOD_MCP_URL || "https://agent.robinhood.com/mcp/trading";
   const llmProvider = creds.ROBINHOOD_LLM_PROVIDER || "GEMINI";
+  let defaultGateway = "https://agent.robinhood.com/mcp/trading";
+  if (llmProvider === "GEMINI") {
+    defaultGateway = "https://agent.robinhood.com/google/mcp/trading";
+  } else if (llmProvider === "CLAUDE") {
+    defaultGateway = "https://agent.robinhood.com/claude/mcp/trading";
+  } else if (llmProvider === "OPENAI") {
+    defaultGateway = "https://agent.robinhood.com/openai/mcp/trading";
+  }
+  const mcpGateway = creds.ROBINHOOD_MCP_URL && creds.ROBINHOOD_MCP_URL !== "https://agent.robinhood.com/mcp/trading"
+    ? creds.ROBINHOOD_MCP_URL 
+    : defaultGateway;
 
   let apiKey = "";
   if (llmProvider === "GEMINI") {
@@ -2378,6 +2434,7 @@ export function getBotConfig() {
   return botConfig;
 }
 export async function updateBotConfig(newConfig: Partial<BotConfig>, userId?: string) {
+  lastLocalUpdateTime = Date.now();
   const oldConnection = botConfig.isConnectionActive;
   const oldRunning = botConfig.isBotRunning;
 

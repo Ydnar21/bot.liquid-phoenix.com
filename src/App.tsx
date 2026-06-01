@@ -8,6 +8,7 @@ import ActivePositionPanel from "./components/ActivePositionPanel";
 import ScreenerPanel from "./components/ScreenerPanel";
 import LogsConsole from "./components/LogsConsole";
 import PerformanceHistory from "./components/PerformanceHistory";
+import SimulatedTerminal from "./components/SimulatedTerminal";
 import { auth, googleProvider, signInWithPopup, signOut, db, switchToDefaultClientDb } from "./firebase";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { doc, setDoc, getDoc } from "firebase/firestore";
@@ -15,6 +16,7 @@ import { doc, setDoc, getDoc } from "firebase/firestore";
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<"dashboard" | "terminal">("dashboard");
 
   // User Consent Agreements for Financial Disclaimers & Liability Waiver
   const [consentedTerms, setConsentedTerms] = useState(false);
@@ -161,7 +163,9 @@ export default function App() {
 
   const safeFetchJson = async <T,>(url: string, currentVal: T): Promise<T> => {
     try {
-      const res = await fetch(url);
+      const separator = url.includes("?") ? "&" : "?";
+      const busterUrl = `${url}${separator}_t=${Date.now()}`;
+      const res = await fetch(busterUrl);
       if (!res.ok) {
         return currentVal;
       }
@@ -253,6 +257,18 @@ export default function App() {
   };
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("connected") === "true") {
+      const newUrl = window.location.pathname;
+      window.history.replaceState({}, document.title, newUrl);
+      handleSaveConfig({
+        isConnectionActive: true
+      });
+      triggerBanner("Authenticated and connected to Robinhood Agentic MCP Successfully!", "success");
+    }
+  }, []);
+
+  useEffect(() => {
     if (user) {
       fetchAllStates();
       // Poll updates every 10 seconds to render logs, real-time prices & executions
@@ -264,13 +280,18 @@ export default function App() {
   }, [user]);
 
   const handleSaveConfig = async (updated: Partial<BotConfig>) => {
+    // Optimistic client-side state updates for instant visual confirmation
+    setConfig((prev) => ({ ...prev, ...updated }));
+    if (updated.isConnectionActive === false) {
+      setAlpacaAccount(null);
+    }
+
     const uid = auth.currentUser?.uid || "";
     try {
       if (updated.isConnectionActive !== undefined) {
         localStorage.setItem("connection_active_v1", String(updated.isConnectionActive));
         if (!updated.isConnectionActive) {
           localStorage.setItem("bot_running_v1", "false");
-          setAlpacaAccount(null);
         }
       }
       if (updated.isBotRunning !== undefined) {
@@ -284,6 +305,9 @@ export default function App() {
       });
       const data = await res.json();
       if (data.success) {
+        if (data.config) {
+          setConfig(data.config);
+        }
         triggerBanner("API Configurations saved and synchronized successfully.", "success");
         fetchAllStates();
       } else {
@@ -296,6 +320,7 @@ export default function App() {
 
   const handleToggleBot = async () => {
     const nextRunningStatus = !config.isBotRunning;
+    setConfig((prev) => ({ ...prev, isBotRunning: nextRunningStatus }));
     localStorage.setItem("bot_running_v1", String(nextRunningStatus));
     const uid = auth.currentUser?.uid || "";
 
@@ -320,6 +345,13 @@ export default function App() {
 
   const handleToggleConnection = async () => {
     const nextConnectionStatus = !config.isConnectionActive;
+    setConfig((prev) => {
+      const nextConf = { ...prev, isConnectionActive: nextConnectionStatus };
+      if (!nextConnectionStatus) {
+        nextConf.isBotRunning = false;
+      }
+      return nextConf;
+    });
     localStorage.setItem("connection_active_v1", String(nextConnectionStatus));
     const uid = auth.currentUser?.uid || "";
     const isRobinhood = alpacaAccount?.broker === "ROBINHOOD";
@@ -720,121 +752,160 @@ export default function App() {
       {/* Main Dashboard workspace bento grids layout */}
       <main className="max-w-7xl mx-auto px-6 py-8 space-y-6">
         
-        {/* Core Quick Rule Highlights banner */}
-        <div className="bg-theme-panel border border-theme-border rounded p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 text-xs">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded bg-theme-accent/10 text-theme-accent border border-theme-accent/20">
-              <Sparkles className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="font-bold text-white/90 uppercase tracking-tight">Autonomous Risk Rules Loaded</h3>
-              <p className="text-[11px] text-gray-400 font-mono">LONG ONLY | MAX 1 POSITION | 100% PORTFOLIO EQUITY TRIGGER | AUTO-EXIT 1D BEFORE EARNINGS</p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 text-[11px] font-mono text-gray-500">
-            <span>Last Scan: {botState.lastScanTime ? new Date(botState.lastScanTime).toLocaleTimeString() : "Never"}</span>
-            <span className="text-theme-border">|</span>
-            <span>Next Evaluator: {botState.nextScanTime ? new Date(botState.nextScanTime).toLocaleTimeString() : "No active intervals scheduled"}</span>
-          </div>
+        {/* Navigation Tabs Selector */}
+        <div className="flex border-b border-theme-border/60 pb-1 flex-wrap gap-4 sm:gap-6">
+          <button
+            onClick={() => setActiveTab("dashboard")}
+            className={`font-mono text-xs font-bold uppercase tracking-wider pb-2 border-b-2 transition-all cursor-pointer flex items-center gap-2 ${
+              activeTab === "dashboard"
+                ? "border-theme-accent text-white"
+                : "border-transparent text-gray-500 hover:text-gray-300"
+            }`}
+          >
+            <span>📊</span> Live Dashboard View
+          </button>
+          <button
+            onClick={() => setActiveTab("terminal")}
+            className={`font-mono text-xs font-bold uppercase tracking-wider pb-2 border-b-2 transition-all cursor-pointer flex items-center gap-2 ${
+              activeTab === "terminal"
+                ? "border-theme-accent text-white"
+                : "border-transparent text-gray-500 hover:text-gray-300"
+            }`}
+          >
+            <span>💻</span> Simulated Linux Cloud Terminal
+          </button>
         </div>
 
-        {/* Bento Grid Area */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-          {/* Settings Sidebar Panel */}
-          <div className="lg:col-span-1 space-y-6">
-            <Settings config={config} onSaveConfig={handleSaveConfig} currentUser={user} />
-            <CalendarPanel events={botState.storedEvents || []} />
-          </div>
-
-          {/* Active Positions & Screener proposals workspace */}
-          <div className="lg:col-span-2 space-y-6">
-            {!config.isConnectionActive ? (
-              <div className="bg-theme-panel border border-theme-border rounded p-8 text-center flex flex-col items-center justify-center min-h-[400px] gap-4 relative overflow-hidden">
-                <div className="absolute top-0 left-0 w-full h-[2px] bg-amber-500/50" />
-                
-                {/* Visual Standby Indicator */}
-                <div className="relative flex items-center justify-center">
-                  <div className="absolute w-12 h-12 bg-amber-500/10 rounded-full animate-ping" />
-                  <div className="w-12 h-12 bg-theme-input border border-amber-500/30 rounded-full flex items-center justify-center text-amber-500 font-bold font-mono">
-                    💤
-                  </div>
+        {activeTab === "terminal" ? (
+          <SimulatedTerminal
+            botConfig={config}
+            botState={botState}
+            onToggleBot={handleToggleBot}
+            onTriggerScan={handleTriggerScan}
+            isScanning={isScanning}
+            currentUser={user}
+            onSaveConfig={handleSaveConfig}
+            alpacaAccount={alpacaAccount}
+          />
+        ) : (
+          <>
+            {/* Core Quick Rule Highlights banner */}
+            <div className="bg-theme-panel border border-theme-border rounded p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 text-xs">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded bg-theme-accent/10 text-theme-accent border border-theme-accent/20">
+                  <Sparkles className="w-5 h-5" />
                 </div>
-
-                <div className="max-w-md mx-auto space-y-3">
-                  <h3 className="text-sm font-bold text-white uppercase tracking-wider font-display">
-                    Sentry Bot Connection Standby
-                  </h3>
-                  <p className="text-xs text-gray-400 font-sans leading-relaxed">
-                    Alpaca integration channels are currently offline. In this state, actual Alpaca account equity, connected trade lists, real-time SPY pricing nodes, and AI swing screening matrices are fully suspended.
-                  </p>
-                  
-                  <div className="pt-4 border-t border-theme-border/50 text-left space-y-2">
-                    <p className="text-[10px] text-gray-500 font-mono uppercase tracking-wider">How to activate connection:</p>
-                    <ul className="text-xs text-gray-400 space-y-1.5 list-disc pl-4 font-sans">
-                      <li>Ensure your Alpaca credentials are configured under Connection Settings.</li>
-                      <li>Click the <span className="text-theme-accent font-semibold uppercase">"Connect Alpaca"</span> trigger in the header panel.</li>
-                      <li>This connects to REST APIs, polls balances, and activates your live terminal view without starting autonomous swing cycles.</li>
-                    </ul>
-                  </div>
+                <div>
+                  <h3 className="font-bold text-white/90 uppercase tracking-tight">Autonomous Risk Rules Loaded</h3>
+                  <p className="text-[11px] text-gray-400 font-mono">LONG ONLY | MAX 1 POSITION | 100% PORTFOLIO EQUITY TRIGGER | AUTO-EXIT 1D BEFORE EARNINGS</p>
                 </div>
               </div>
-            ) : (
-              <>
-                {!config.isBotRunning && (
-                  <div className="bg-amber-500/10 border border-amber-500/30 rounded p-4 text-xs font-mono text-amber-400 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
-                    <div className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" />
-                      <span><strong>Terminal Mode Active &bull; Swing Scheduler Paused:</strong> Real-time balances and tracking panels are connected, but autonomous automated scans and buy/sell execution sequences are currently offline.</span>
-                    </div>
-                    <button
-                      onClick={handleToggleBot}
-                      className="bg-amber-500 hover:bg-amber-400 text-black px-3 py-1.5 rounded font-black uppercase text-[10px] transition-colors cursor-pointer shrink-0 text-center"
-                    >
-                      Activate Trading
-                    </button>
-                  </div>
-                )}
 
-                {config.isBotRunning && !botState.isMarketOpen && (
-                  <div className="bg-amber-500/10 border border-amber-500/30 rounded p-4 text-xs font-mono text-amber-500 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
-                    <div className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" />
-                      <span><strong>US Market is CLOSED &bull; Bot is in On-Duty Standby:</strong> The Swing trading bot is active, healthy, and synced 24/7. However, active scans and trading actions are currently paused because the US stock market is closed. Tracking and automated sweeps will fully resume when pre-market or standard hours open.</span>
+              <div className="flex items-center gap-2 text-[11px] font-mono text-gray-500">
+                <span>Last Scan: {botState.lastScanTime ? new Date(botState.lastScanTime).toLocaleTimeString() : "Never"}</span>
+                <span className="text-theme-border">|</span>
+                <span>Next Evaluator: {botState.nextScanTime ? new Date(botState.nextScanTime).toLocaleTimeString() : "No active intervals scheduled"}</span>
+              </div>
+            </div>
+
+            {/* Bento Grid Area */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+              {/* Settings Sidebar Panel */}
+              <div className="lg:col-span-1 space-y-6">
+                <Settings config={config} onSaveConfig={handleSaveConfig} currentUser={user} />
+                <CalendarPanel events={botState.storedEvents || []} />
+              </div>
+
+              {/* Active Positions & Screener proposals workspace */}
+              <div className="lg:col-span-2 space-y-6">
+                {!config.isConnectionActive ? (
+                  <div className="bg-theme-panel border border-theme-border rounded p-8 text-center flex flex-col items-center justify-center min-h-[400px] gap-4 relative overflow-hidden">
+                    <div className="absolute top-0 left-0 w-full h-[2px] bg-amber-500/50" />
+                    
+                    {/* Visual Standby Indicator */}
+                    <div className="relative flex items-center justify-center">
+                      <div className="absolute w-12 h-12 bg-amber-500/10 rounded-full animate-ping" />
+                      <div className="w-12 h-12 bg-theme-input border border-amber-500/30 rounded-full flex items-center justify-center text-amber-500 font-bold font-mono">
+                        💤
+                      </div>
+                    </div>
+
+                    <div className="max-w-md mx-auto space-y-3">
+                      <h3 className="text-sm font-bold text-white uppercase tracking-wider font-display">
+                        Sentry Bot Connection Standby
+                      </h3>
+                      <p className="text-xs text-gray-400 font-sans leading-relaxed">
+                        Alpaca integration channels are currently offline. In this state, actual Alpaca account equity, connected trade lists, real-time SPY pricing nodes, and AI swing screening matrices are fully suspended.
+                      </p>
+                      
+                      <div className="pt-4 border-t border-theme-border/50 text-left space-y-2">
+                        <p className="text-[10px] text-gray-500 font-mono uppercase tracking-wider">How to activate connection:</p>
+                        <ul className="text-xs text-gray-400 space-y-1.5 list-disc pl-4 font-sans">
+                          <li>Ensure your Alpaca credentials are configured under Connection Settings.</li>
+                          <li>Click the <span className="text-theme-accent font-semibold uppercase">"Connect Alpaca"</span> trigger in the header panel.</li>
+                          <li>This connects to REST APIs, polls balances, and activates your live terminal view without starting autonomous swing cycles.</li>
+                        </ul>
+                      </div>
                     </div>
                   </div>
-                )}
+                ) : (
+                  <>
+                    {!config.isBotRunning && (
+                      <div className="bg-amber-500/10 border border-amber-500/30 rounded p-4 text-xs font-mono text-amber-400 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" />
+                          <span><strong>Terminal Mode Active &bull; Swing Scheduler Paused:</strong> Real-time balances and tracking panels are connected, but autonomous automated scans and buy/sell execution sequences are currently offline.</span>
+                        </div>
+                        <button
+                          onClick={handleToggleBot}
+                          className="bg-amber-500 hover:bg-amber-400 text-black px-3 py-1.5 rounded font-black uppercase text-[10px] transition-colors cursor-pointer shrink-0 text-center"
+                        >
+                          Activate Trading
+                        </button>
+                      </div>
+                    )}
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
-                  <div className="md:col-span-2">
-                    <ActivePositionPanel
-                      position={position}
-                      onExitPosition={handleExitPosition}
-                      isExiting={isExiting}
+                    {config.isBotRunning && !botState.isMarketOpen && (
+                      <div className="bg-amber-500/10 border border-amber-500/30 rounded p-4 text-xs font-mono text-amber-500 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" />
+                          <span><strong>US Market is CLOSED &bull; Bot is in On-Duty Standby:</strong> The Swing trading bot is active, healthy, and synced 24/7. However, active scans and trading actions are currently paused because the US stock market is closed. Tracking and automated sweeps will fully resume when pre-market or standard hours open.</span>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
+                      <div className="md:col-span-2">
+                        <ActivePositionPanel
+                          position={position}
+                          onExitPosition={handleExitPosition}
+                          isExiting={isExiting}
+                        />
+                      </div>
+                    </div>
+
+                    <ScreenerPanel
+                      setups={setups}
+                      onDeploy={handleDeployProposal}
+                      isDeploying={isDeploying}
+                      hasActivePosition={!!position}
                     />
-                  </div>
-                </div>
+                  </>
+                )}
+              </div>
+            </div>
 
-                <ScreenerPanel
-                  setups={setups}
-                  onDeploy={handleDeployProposal}
-                  isDeploying={isDeploying}
-                  hasActivePosition={!!position}
-                />
-              </>
-            )}
-          </div>
-        </div>
+            {/* Historic trades ledger table element */}
+            <div className="w-full">
+              <PerformanceHistory history={history} />
+            </div>
 
-        {/* Historic trades ledger table element */}
-        <div className="w-full">
-          <PerformanceHistory history={history} />
-        </div>
-
-        {/* Tactical Bot Flight Monitor Logs console */}
-        <div className="w-full">
-          <LogsConsole logs={logs} onClearLogs={handleClearLogs} />
-        </div>
+            {/* Tactical Bot Flight Monitor Logs console */}
+            <div className="w-full">
+              <LogsConsole logs={logs} onClearLogs={handleClearLogs} />
+            </div>
+          </>
+        )}
       </main>
 
       {/* Humble Footer signature */}

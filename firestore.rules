@@ -41,6 +41,10 @@ service cloud.firestore {
         && data.ALPACA_BASE_URL is string && data.ALPACA_BASE_URL.size() <= 256;
     }
 
+    function isValidTerminalWorkspace(data) {
+      return data.files is map;
+    }
+
     // Match rules for each blueprint collection pathway
     match /users/{userId} {
       allow read: if isSignedIn() && isValidId(userId);
@@ -53,6 +57,13 @@ service cloud.firestore {
       allow read: if isOwner(userId) && isValidId(userId);
       allow create: if isOwner(userId) && isValidId(userId) && isValidCredentials(request.resource.data);
       allow update: if isOwner(userId) && isValidId(userId) && isValidCredentials(request.resource.data);
+      allow delete: if isOwner(userId) && isValidId(userId);
+    }
+
+    match /users/{userId}/terminal_v1/filesystem {
+      allow read: if isOwner(userId) && isValidId(userId);
+      allow create: if isOwner(userId) && isValidId(userId) && isValidTerminalWorkspace(request.resource.data);
+      allow update: if isOwner(userId) && isValidId(userId) && isValidTerminalWorkspace(request.resource.data);
       allow delete: if isOwner(userId) && isValidId(userId);
     }
 

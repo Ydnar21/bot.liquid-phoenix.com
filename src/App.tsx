@@ -9,6 +9,8 @@ import ScreenerPanel from "./components/ScreenerPanel";
 import LogsConsole from "./components/LogsConsole";
 import PerformanceHistory from "./components/PerformanceHistory";
 import SimulatedTerminal from "./components/SimulatedTerminal";
+import UsernameModal from "./components/UsernameModal";
+import LeaderboardPanel from "./components/LeaderboardPanel";
 import { auth, googleProvider, signInWithPopup, signOut, db, switchToDefaultClientDb } from "./firebase";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { doc, setDoc, getDoc } from "firebase/firestore";
@@ -16,7 +18,10 @@ import { doc, setDoc, getDoc } from "firebase/firestore";
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"dashboard" | "terminal">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "terminal" | "leaderboard">("dashboard");
+  
+  const [username, setUsername] = useState<string>("");
+  const [showUsernameSetup, setShowUsernameSetup] = useState<boolean>(false);
 
   // User Consent Agreements for Financial Disclaimers & Liability Waiver
   const [consentedTerms, setConsentedTerms] = useState(false);
@@ -75,33 +80,64 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
       if (u) {
         setUser(u);
+        let existingUsername = "";
         try {
           const userRef = doc(db, "users", u.uid);
+          const snap = await getDoc(userRef);
+          if (snap.exists()) {
+            existingUsername = snap.data()?.username || "";
+          }
+          
           await setDoc(userRef, {
             uid: u.uid,
             email: u.email || "",
-            displayName: u.displayName || "Anonymous",
+            displayName: existingUsername || u.displayName || "Anonymous",
             photoURL: u.photoURL || "",
             lastLogin: new Date().toISOString()
           }, { merge: true });
         } catch (e: any) {
-          console.error("Firestore user profile sync error:", e.message);
+          console.warn("Firestore user profile client-side query failure, will fall back to server registry API:", e.message);
           if (e.message && (e.message.toLowerCase().includes("not-found") || e.message.toLowerCase().includes("database") || e.message.toLowerCase().includes("not_found"))) {
             try {
               switchToDefaultClientDb();
               const userRef = doc(db, "users", u.uid);
+              const snap = await getDoc(userRef);
+              if (snap.exists()) {
+                existingUsername = snap.data()?.username || "";
+              }
               await setDoc(userRef, {
                 uid: u.uid,
                 email: u.email || "",
-                displayName: u.displayName || "Anonymous",
+                displayName: existingUsername || u.displayName || "Anonymous",
                 photoURL: u.photoURL || "",
                 lastLogin: new Date().toISOString()
               }, { merge: true });
               console.log("Successfully synced user profile to default database fallback");
             } catch (retryError: any) {
-              console.error("Firestore user profile sync fallback error:", retryError.message);
+              console.warn("Firestore user profile sync fallback error:", retryError.message);
             }
           }
+        }
+
+        // Secure secondary lookup: consult server registries under permission denial/empty scenarios
+        if (!existingUsername) {
+          try {
+            const apiRes = await fetch(`/api/get-username?userId=${u.uid}`);
+            if (apiRes.ok) {
+              const apiData = await apiRes.json();
+              if (apiData.success && apiData.username) {
+                existingUsername = apiData.username;
+                console.log(`[CLIENT AUTHSYNC] Username resolved via server registry fallback: ${existingUsername}`);
+              }
+            }
+          } catch (apiErr: any) {
+            console.error("[CLIENT AUTHSYNC] Server registry username fetch failed:", apiErr.message);
+          }
+        }
+
+        setUsername(existingUsername);
+        if (!existingUsername) {
+          setShowUsernameSetup(true);
         }
 
         // Load secure private credentials from Firestore using the user authenticated client context
@@ -155,6 +191,8 @@ export default function App() {
         }
       } else {
         setUser(null);
+        setUsername("");
+        setShowUsernameSetup(false);
       }
       setAuthLoading(false);
     });
@@ -213,32 +251,6 @@ export default function App() {
       setSetups(setupsRes);
       setLogs(logsRes);
       setAlpacaAccount(accountRes);
-
-      // Self-healing Watchdog: If the server restarted/scaled-down and lost running/connection states,
-      // but this client browser remembers that the bot was active, heal the server state immediately!
-      const rememberedBotRunning = localStorage.getItem("bot_running_v1") === "true";
-      const rememberedConnectionActive = localStorage.getItem("connection_active_v1") === "true";
-      
-      let needsStateCorrection = false;
-      const correctionPayload: Record<string, boolean> = {};
-
-      if (rememberedBotRunning && !configRes.isBotRunning) {
-        correctionPayload.isBotRunning = true;
-        needsStateCorrection = true;
-      }
-      if (rememberedConnectionActive && !configRes.isConnectionActive) {
-        correctionPayload.isConnectionActive = true;
-        needsStateCorrection = true;
-      }
-
-      if (needsStateCorrection) {
-        console.info("[Watchdog] Server restart detected. Restoring intended active states to server:", correctionPayload);
-        await fetch(`/api/config?userId=${uid}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(correctionPayload),
-        });
-      }
     } catch (err: any) {
       const errMsg = (err instanceof Error ? err.message : String(err)) || "";
       const lowerMsg = errMsg.toLowerCase();
@@ -257,6 +269,7 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (authLoading) return;
     const params = new URLSearchParams(window.location.search);
     if (params.get("connected") === "true") {
       const newUrl = window.location.pathname;
@@ -266,7 +279,7 @@ export default function App() {
       });
       triggerBanner("Authenticated and connected to Robinhood Agentic MCP Successfully!", "success");
     }
-  }, []);
+  }, [authLoading]);
 
   useEffect(() => {
     if (user) {
@@ -288,16 +301,6 @@ export default function App() {
 
     const uid = auth.currentUser?.uid || "";
     try {
-      if (updated.isConnectionActive !== undefined) {
-        localStorage.setItem("connection_active_v1", String(updated.isConnectionActive));
-        if (!updated.isConnectionActive) {
-          localStorage.setItem("bot_running_v1", "false");
-        }
-      }
-      if (updated.isBotRunning !== undefined) {
-        localStorage.setItem("bot_running_v1", String(updated.isBotRunning));
-      }
-
       const res = await fetch(`/api/config?userId=${uid}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -321,7 +324,6 @@ export default function App() {
   const handleToggleBot = async () => {
     const nextRunningStatus = !config.isBotRunning;
     setConfig((prev) => ({ ...prev, isBotRunning: nextRunningStatus }));
-    localStorage.setItem("bot_running_v1", String(nextRunningStatus));
     const uid = auth.currentUser?.uid || "";
 
     try {
@@ -352,7 +354,6 @@ export default function App() {
       }
       return nextConf;
     });
-    localStorage.setItem("connection_active_v1", String(nextConnectionStatus));
     const uid = auth.currentUser?.uid || "";
     const isRobinhood = alpacaAccount?.broker === "ROBINHOOD";
 
@@ -360,7 +361,6 @@ export default function App() {
       const payload: Record<string, any> = { isConnectionActive: nextConnectionStatus };
       if (!nextConnectionStatus) {
         payload.isBotRunning = false;
-        localStorage.setItem("bot_running_v1", "false");
         setAlpacaAccount(null);
       }
 
@@ -627,7 +627,7 @@ export default function App() {
                 {showModal === "terms" ? (
                   <>
                     <p className="text-rose-400 font-bold uppercase tracking-wider border-b border-rose-900/40 pb-2 flex items-center gap-1.5 font-mono text-[10px]">
-                      ⚠️ STRICT DISCLAIMER: NO FINANCIAL REMEDIES & COMPLETELY DISCLAIMED LIABILITY
+                      STRICT DISCLAIMER: NO FINANCIAL REMEDIES & COMPLETELY DISCLAIMED LIABILITY
                     </p>
                     <div className="space-y-4 text-gray-300">
                       <div>
@@ -728,6 +728,8 @@ export default function App() {
         onTriggerScan={handleTriggerScan}
         isScanning={isScanning}
         currentUser={user}
+        username={username}
+        onOpenUsernameSetup={() => setShowUsernameSetup(true)}
         onSignOut={() => signOut(auth)}
         alpacaAccount={alpacaAccount}
       />
@@ -762,7 +764,7 @@ export default function App() {
                 : "border-transparent text-gray-500 hover:text-gray-300"
             }`}
           >
-            <span>📊</span> Live Dashboard View
+            Live Dashboard View
           </button>
           <button
             onClick={() => setActiveTab("terminal")}
@@ -772,11 +774,23 @@ export default function App() {
                 : "border-transparent text-gray-500 hover:text-gray-300"
             }`}
           >
-            <span>💻</span> Simulated Linux Cloud Terminal
+            Robinhood
+          </button>
+          <button
+            onClick={() => setActiveTab("leaderboard")}
+            className={`font-mono text-xs font-bold uppercase tracking-wider pb-2 border-b-2 transition-all cursor-pointer flex items-center gap-2 ${
+              activeTab === "leaderboard"
+                ? "border-theme-accent text-white"
+                : "border-transparent text-gray-500 hover:text-gray-300"
+            }`}
+          >
+            Leaderboard
           </button>
         </div>
 
-        {activeTab === "terminal" ? (
+        {activeTab === "leaderboard" ? (
+          <LeaderboardPanel currentUserId={user?.uid} />
+        ) : activeTab === "terminal" ? (
           <SimulatedTerminal
             botConfig={config}
             botState={botState}
@@ -900,13 +914,27 @@ export default function App() {
               <PerformanceHistory history={history} />
             </div>
 
-            {/* Tactical Bot Flight Monitor Logs console */}
+            {/* Tactical Bot Log console */}
             <div className="w-full">
               <LogsConsole logs={logs} onClearLogs={handleClearLogs} />
             </div>
           </>
         )}
       </main>
+
+      {/* Creative User ID / Username Configuration Panel */}
+      <UsernameModal
+        isOpen={showUsernameSetup}
+        userId={user?.uid || ""}
+        currentUsername={username}
+        forcePrompt={!username}
+        onSaveSuccess={(newUsername) => {
+          setUsername(newUsername);
+          setShowUsernameSetup(false);
+          triggerBanner(`User ID synchronized to ${newUsername}`, "success");
+        }}
+        onClose={() => setShowUsernameSetup(false)}
+      />
 
       {/* Humble Footer signature */}
       <footer className="border-t border-theme-border bg-theme-panel py-6 text-center text-[10px] text-gray-500 font-mono tracking-wider uppercase mt-12 flex flex-col sm:flex-row items-center justify-between px-6 gap-2">

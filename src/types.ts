@@ -34,6 +34,7 @@ export interface StockSetup {
   targetPrice: number;
   sentimentScore: number; // -1 to +1
   sentimentReason: string;
+  thesis?: string;
   blockersFound: string[];
   catalystEvent: string;
   catalystDate: string;

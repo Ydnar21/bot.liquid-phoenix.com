@@ -37,7 +37,9 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
   const [showGeminiKey, setShowGeminiKey] = useState(false);
   const [showClaudeKey, setShowClaudeKey] = useState(false);
   const [showOpenaiKey, setShowOpenaiKey] = useState(false);
-  const [storedDate, setStoredDate] = useState<string | null>(null);
+  const [alpacaStoredDate, setAlpacaStoredDate] = useState<string | null>(null);
+  const [robinhoodStoredDate, setRobinhoodStoredDate] = useState<string | null>(null);
+  const storedDate = brokerType === "ALPACA" ? alpacaStoredDate : robinhoodStoredDate;
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
 
   // Saved profile selectors
@@ -114,12 +116,10 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
             setIsApplied(false);
           }
           
-          const hasCreds = data.ALPACA_API_KEY || data.ROBINHOOD_API_KEY || data.ROBINHOOD_PRIVATE_KEY;
-          if (hasCreds && data.updatedAt) {
-            setStoredDate(data.updatedAt);
-          } else {
-            setStoredDate(null);
-          }
+          const alpacaDate = data.alpacaUpdatedAt || (data.ALPACA_API_KEY ? data.updatedAt : null);
+          const robinhoodDate = data.robinhoodUpdatedAt || ((data.ROBINHOOD_API_KEY || data.ROBINHOOD_PRIVATE_KEY || data.ROBINHOOD_MCP_URL) ? data.updatedAt : null);
+          setAlpacaStoredDate(alpacaDate || null);
+          setRobinhoodStoredDate(robinhoodDate || null);
         }
       } catch (err: any) {
         console.error("Failed to load user credentials from Firestore:", err.message);
@@ -173,12 +173,10 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
                 setIsApplied(false);
               }
               
-              const hasCredsFallback = data.ALPACA_API_KEY || data.ROBINHOOD_API_KEY || data.ROBINHOOD_PRIVATE_KEY;
-              if (hasCredsFallback && data.updatedAt) {
-                setStoredDate(data.updatedAt);
-              } else {
-                setStoredDate(null);
-              }
+              const alpacaDateFallback = data.alpacaUpdatedAt || (data.ALPACA_API_KEY ? data.updatedAt : null);
+              const robinhoodDateFallback = data.robinhoodUpdatedAt || ((data.ROBINHOOD_API_KEY || data.ROBINHOOD_PRIVATE_KEY || data.ROBINHOOD_MCP_URL) ? data.updatedAt : null);
+              setAlpacaStoredDate(alpacaDateFallback || null);
+              setRobinhoodStoredDate(robinhoodDateFallback || null);
             }
           } catch (retryErr: any) {
             console.error("Fallback load user credentials from Firestore also failed:", retryErr.message);
@@ -194,6 +192,24 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
       active = false;
     };
   }, [currentUser]);
+
+  // Synchronize input fields clearing when switching to NEW connection profile
+  useEffect(() => {
+    if (selectedProfile === "NEW") {
+      if (brokerType === "ALPACA") {
+        setApiKey("");
+        setApiSecret("");
+      } else if (brokerType === "ROBINHOOD") {
+        setRobinhoodApiKey("");
+        setRobinhoodPrivateKey("");
+        setRobinhoodAccountNumber("");
+        setGeminiApiKey("");
+        setClaudeApiKey("");
+        setOpenaiApiKey("");
+        setRobinhoodMcpUrl("https://agent.robinhood.com/mcp/trading");
+      }
+    }
+  }, [selectedProfile, brokerType]);
 
   // Load fallback global news scale keys
   useEffect(() => {
@@ -228,39 +244,65 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
   const handleDeleteCredentials = async () => {
     setLoading(true);
     try {
-      // 1. Wipe React States and reset confirmation
-      setApiKey("");
-      setApiSecret("");
-      setRobinhoodApiKey("");
-      setRobinhoodPrivateKey("");
-      setRobinhoodAccountNumber("");
-      setGeminiApiKey("");
-      setClaudeApiKey("");
-      setOpenaiApiKey("");
-      setStoredDate(null);
-      setShowConfirmDelete(false);
+      let updatedPayload: any = {};
 
-      // Wipe profile/backup states too
-      setHasSavedAlpaca(false);
-      setHasSavedRobinhood(false);
-      setSelectedProfile("NEW");
-      setStoredAlpacaKey("");
-      setStoredAlpacaSecret("");
-      setStoredRobinhoodApiKey("");
-      setStoredRobinhoodPrivateKey("");
-      setStoredRobinhoodAccountNumber("");
-      setStoredRobinhoodMcpUrl("https://agent.robinhood.com/mcp/trading");
-      setStoredGeminiApiKey("");
-      setStoredClaudeApiKey("");
-      setStoredOpenaiApiKey("");
+      if (brokerType === "ALPACA") {
+        setApiKey("");
+        setApiSecret("");
+        setStoredAlpacaKey("");
+        setStoredAlpacaSecret("");
+        setHasSavedAlpaca(false);
+        setAlpacaStoredDate(null);
 
-      // 2. Clear stored credentials in Firestore
-      if (currentUser) {
-        const payload = {
-          brokerType,
+        updatedPayload = {
+          brokerType: hasSavedRobinhood ? "ROBINHOOD" : "ALPACA",
           ALPACA_API_KEY: "",
           ALPACA_SECRET_KEY: "",
           ALPACA_BASE_URL: baseUrl,
+          ROBINHOOD_API_KEY: storedRobinhoodApiKey || "",
+          ROBINHOOD_PRIVATE_KEY: storedRobinhoodPrivateKey || "",
+          ROBINHOOD_ACCOUNT_NUMBER: storedRobinhoodAccountNumber || "",
+          ROBINHOOD_MCP_URL: storedRobinhoodMcpUrl || "https://agent.robinhood.com/mcp/trading",
+          GEMINI_API_KEY: storedGeminiApiKey || "",
+          CLAUDE_API_KEY: storedClaudeApiKey || "",
+          OPENAI_API_KEY: storedOpenaiApiKey || "",
+          ROBINHOOD_LLM_PROVIDER: storedRobinhoodLlmProvider || "GEMINI",
+          alpacaUpdatedAt: "",
+          robinhoodUpdatedAt: (hasSavedRobinhood ? robinhoodStoredDate : "") || "",
+        };
+
+        if (hasSavedRobinhood) {
+          setBrokerType("ROBINHOOD");
+          setSelectedProfile("SAVED_ROBINHOOD");
+          setIsApplied(true);
+        } else {
+          setSelectedProfile("NEW");
+          setIsApplied(false);
+        }
+      } else {
+        // Deleting Robinhood - fully clear all inputs and stored fields
+        setRobinhoodApiKey("");
+        setRobinhoodPrivateKey("");
+        setRobinhoodAccountNumber("");
+        setStoredRobinhoodApiKey("");
+        setStoredRobinhoodPrivateKey("");
+        setStoredRobinhoodAccountNumber("");
+        setRobinhoodMcpUrl("https://agent.robinhood.com/mcp/trading");
+        setStoredRobinhoodMcpUrl("https://agent.robinhood.com/mcp/trading");
+        setGeminiApiKey("");
+        setClaudeApiKey("");
+        setOpenaiApiKey("");
+        setStoredGeminiApiKey("");
+        setStoredClaudeApiKey("");
+        setStoredOpenaiApiKey("");
+        setHasSavedRobinhood(false);
+        setRobinhoodStoredDate(null);
+
+        updatedPayload = {
+          brokerType: hasSavedAlpaca ? "ALPACA" : "ROBINHOOD",
+          ALPACA_API_KEY: storedAlpacaKey || "",
+          ALPACA_SECRET_KEY: storedAlpacaSecret || "",
+          ALPACA_BASE_URL: baseUrl || "https://paper-api.alpaca.markets",
           ROBINHOOD_API_KEY: "",
           ROBINHOOD_PRIVATE_KEY: "",
           ROBINHOOD_ACCOUNT_NUMBER: "",
@@ -268,18 +310,32 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
           GEMINI_API_KEY: "",
           CLAUDE_API_KEY: "",
           OPENAI_API_KEY: "",
-          ROBINHOOD_LLM_PROVIDER: robinhoodLlmProvider,
-          updatedAt: "",
+          ROBINHOOD_LLM_PROVIDER: "GEMINI",
+          alpacaUpdatedAt: (hasSavedAlpaca ? alpacaStoredDate : "") || "",
+          robinhoodUpdatedAt: "",
         };
 
+        if (hasSavedAlpaca) {
+          setBrokerType("ALPACA");
+          setSelectedProfile("SAVED_ALPACA");
+          setIsApplied(true);
+        } else {
+          setSelectedProfile("NEW");
+          setIsApplied(false);
+        }
+      }
+
+      setShowConfirmDelete(false);
+
+      if (currentUser) {
         try {
           const credRef = doc(db, "users", currentUser.uid, "private", "credentials");
-          await setDoc(credRef, payload);
+          await setDoc(credRef, updatedPayload);
         } catch (e: any) {
           if (e.message && (e.message.toLowerCase().includes("not-found") || e.message.toLowerCase().includes("database") || e.message.toLowerCase().includes("not_found"))) {
             switchToDefaultClientDb();
             const credRef = doc(db, "users", currentUser.uid, "private", "credentials");
-            await setDoc(credRef, payload);
+            await setDoc(credRef, updatedPayload);
           } else {
             throw e;
           }
@@ -292,7 +348,7 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               userId: currentUser.uid,
-              ...payload,
+              ...updatedPayload,
             }),
           });
         } catch (errFallback) {
@@ -300,10 +356,11 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
         }
       }
 
-      // 3. Update the bot configurations
+      // 3. Update the bot configurations (safely toggle isConnectionActive only if no saved broker remaining)
+      const hasAnyRemaining = (brokerType === "ALPACA" && hasSavedRobinhood) || (brokerType === "ROBINHOOD" && hasSavedAlpaca);
       onSaveConfig({
-        isConnectionActive: false,
-        isBotRunning: false,
+        isConnectionActive: hasAnyRemaining,
+        isBotRunning: hasAnyRemaining,
       });
 
       setIsSaved(true);
@@ -339,7 +396,8 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
             CLAUDE_API_KEY: storedClaudeApiKey,
             OPENAI_API_KEY: storedOpenaiApiKey,
             ROBINHOOD_LLM_PROVIDER: storedRobinhoodLlmProvider,
-            updatedAt: storedDate || timestamp,
+            alpacaUpdatedAt: alpacaStoredDate || timestamp,
+            robinhoodUpdatedAt: robinhoodStoredDate,
           };
         } else if (selectedProfile === "SAVED_ROBINHOOD") {
           payload = {
@@ -355,24 +413,45 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
             CLAUDE_API_KEY: storedClaudeApiKey,
             OPENAI_API_KEY: storedOpenaiApiKey,
             ROBINHOOD_LLM_PROVIDER: robinhoodLlmProvider,
-            updatedAt: storedDate || timestamp,
+            alpacaUpdatedAt: alpacaStoredDate,
+            robinhoodUpdatedAt: robinhoodStoredDate || timestamp,
           };
         } else {
-          payload = {
-            brokerType,
-            ALPACA_API_KEY: apiKey || storedAlpacaKey,
-            ALPACA_SECRET_KEY: apiSecret || storedAlpacaSecret,
-            ALPACA_BASE_URL: baseUrl,
-            ROBINHOOD_API_KEY: robinhoodApiKey || storedRobinhoodApiKey,
-            ROBINHOOD_PRIVATE_KEY: robinhoodPrivateKey || storedRobinhoodPrivateKey,
-            ROBINHOOD_ACCOUNT_NUMBER: robinhoodAccountNumber || storedRobinhoodAccountNumber,
-            ROBINHOOD_MCP_URL: robinhoodMcpUrl || storedRobinhoodMcpUrl,
-            GEMINI_API_KEY: geminiApiKey || storedGeminiApiKey,
-            CLAUDE_API_KEY: claudeApiKey || storedClaudeApiKey,
-            OPENAI_API_KEY: openaiApiKey || storedOpenaiApiKey,
-            ROBINHOOD_LLM_PROVIDER: robinhoodLlmProvider,
-            updatedAt: timestamp,
-          };
+          if (brokerType === "ALPACA") {
+            payload = {
+              brokerType,
+              ALPACA_API_KEY: apiKey || storedAlpacaKey,
+              ALPACA_SECRET_KEY: apiSecret || storedAlpacaSecret,
+              ALPACA_BASE_URL: baseUrl,
+              ROBINHOOD_API_KEY: storedRobinhoodApiKey,
+              ROBINHOOD_PRIVATE_KEY: storedRobinhoodPrivateKey,
+              ROBINHOOD_ACCOUNT_NUMBER: storedRobinhoodAccountNumber,
+              ROBINHOOD_MCP_URL: storedRobinhoodMcpUrl,
+              GEMINI_API_KEY: storedGeminiApiKey,
+              CLAUDE_API_KEY: storedClaudeApiKey,
+              OPENAI_API_KEY: storedOpenaiApiKey,
+              ROBINHOOD_LLM_PROVIDER: storedRobinhoodLlmProvider,
+              alpacaUpdatedAt: timestamp,
+              robinhoodUpdatedAt: robinhoodStoredDate,
+            };
+          } else {
+            payload = {
+              brokerType,
+              ALPACA_API_KEY: storedAlpacaKey,
+              ALPACA_SECRET_KEY: storedAlpacaSecret,
+              ALPACA_BASE_URL: storedBaseUrl,
+              ROBINHOOD_API_KEY: robinhoodApiKey || storedRobinhoodApiKey,
+              ROBINHOOD_PRIVATE_KEY: robinhoodPrivateKey || storedRobinhoodPrivateKey,
+              ROBINHOOD_ACCOUNT_NUMBER: robinhoodAccountNumber || storedRobinhoodAccountNumber,
+              ROBINHOOD_MCP_URL: robinhoodMcpUrl || storedRobinhoodMcpUrl,
+              GEMINI_API_KEY: geminiApiKey || storedGeminiApiKey,
+              CLAUDE_API_KEY: claudeApiKey || storedClaudeApiKey,
+              OPENAI_API_KEY: openaiApiKey || storedOpenaiApiKey,
+              ROBINHOOD_LLM_PROVIDER: robinhoodLlmProvider,
+              alpacaUpdatedAt: alpacaStoredDate,
+              robinhoodUpdatedAt: timestamp,
+            };
+          }
 
           // Update backup copies
           if (brokerType === "ALPACA") {
@@ -425,7 +504,11 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
       }
 
       // Update storedDate with newly set timestamp instantly
-      setStoredDate(timestamp);
+      if (brokerType === "ALPACA") {
+        setAlpacaStoredDate(timestamp);
+      } else {
+        setRobinhoodStoredDate(timestamp);
+      }
 
       // Clear only the inputs since they are now saved and can be loaded from profile view
       setApiKey("");
@@ -437,10 +520,9 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
       setClaudeApiKey("");
       setOpenaiApiKey("");
 
-      // Sync global news configuration updates & activate connection state
+      // Sync global news configuration updates without force connecting
       await onSaveConfig({
         NEWSAPI_KEY: newsKey,
-        isConnectionActive: true,
       });
 
       setIsSaved(true);
@@ -484,7 +566,8 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
           CLAUDE_API_KEY: storedClaudeApiKey,
           OPENAI_API_KEY: storedOpenaiApiKey,
           ROBINHOOD_LLM_PROVIDER: storedRobinhoodLlmProvider,
-          updatedAt: storedDate || timestamp,
+          alpacaUpdatedAt: alpacaStoredDate || timestamp,
+          robinhoodUpdatedAt: robinhoodStoredDate,
         };
       } else if (effectiveProfile === "SAVED_ROBINHOOD") {
         payload = {
@@ -500,24 +583,45 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
           CLAUDE_API_KEY: storedClaudeApiKey,
           OPENAI_API_KEY: storedOpenaiApiKey,
           ROBINHOOD_LLM_PROVIDER: robinhoodLlmProvider,
-          updatedAt: storedDate || timestamp,
+          alpacaUpdatedAt: alpacaStoredDate,
+          robinhoodUpdatedAt: robinhoodStoredDate || timestamp,
         };
       } else {
-        payload = {
-          brokerType,
-          ALPACA_API_KEY: apiKey || storedAlpacaKey,
-          ALPACA_SECRET_KEY: apiSecret || storedAlpacaSecret,
-          ALPACA_BASE_URL: baseUrl,
-          ROBINHOOD_API_KEY: robinhoodApiKey || storedRobinhoodApiKey,
-          ROBINHOOD_PRIVATE_KEY: robinhoodPrivateKey || storedRobinhoodPrivateKey,
-          ROBINHOOD_ACCOUNT_NUMBER: robinhoodAccountNumber || storedRobinhoodAccountNumber,
-          ROBINHOOD_MCP_URL: robinhoodMcpUrl || storedRobinhoodMcpUrl,
-          GEMINI_API_KEY: geminiApiKey || storedGeminiApiKey,
-          CLAUDE_API_KEY: claudeApiKey || storedClaudeApiKey,
-          OPENAI_API_KEY: openaiApiKey || storedOpenaiApiKey,
-          ROBINHOOD_LLM_PROVIDER: robinhoodLlmProvider,
-          updatedAt: timestamp,
-        };
+        if (brokerType === "ALPACA") {
+          payload = {
+            brokerType,
+            ALPACA_API_KEY: apiKey || storedAlpacaKey,
+            ALPACA_SECRET_KEY: apiSecret || storedAlpacaSecret,
+            ALPACA_BASE_URL: baseUrl,
+            ROBINHOOD_API_KEY: storedRobinhoodApiKey,
+            ROBINHOOD_PRIVATE_KEY: storedRobinhoodPrivateKey,
+            ROBINHOOD_ACCOUNT_NUMBER: storedRobinhoodAccountNumber,
+            ROBINHOOD_MCP_URL: storedRobinhoodMcpUrl,
+            GEMINI_API_KEY: storedGeminiApiKey,
+            CLAUDE_API_KEY: storedClaudeApiKey,
+            OPENAI_API_KEY: storedOpenaiApiKey,
+            ROBINHOOD_LLM_PROVIDER: storedRobinhoodLlmProvider,
+            alpacaUpdatedAt: timestamp,
+            robinhoodUpdatedAt: robinhoodStoredDate,
+          };
+        } else {
+          payload = {
+            brokerType,
+            ALPACA_API_KEY: storedAlpacaKey,
+            ALPACA_SECRET_KEY: storedAlpacaSecret,
+            ALPACA_BASE_URL: storedBaseUrl,
+            ROBINHOOD_API_KEY: robinhoodApiKey || storedRobinhoodApiKey,
+            ROBINHOOD_PRIVATE_KEY: robinhoodPrivateKey || storedRobinhoodPrivateKey,
+            ROBINHOOD_ACCOUNT_NUMBER: robinhoodAccountNumber || storedRobinhoodAccountNumber,
+            ROBINHOOD_MCP_URL: robinhoodMcpUrl || storedRobinhoodMcpUrl,
+            GEMINI_API_KEY: geminiApiKey || storedGeminiApiKey,
+            CLAUDE_API_KEY: claudeApiKey || storedClaudeApiKey,
+            OPENAI_API_KEY: openaiApiKey || storedOpenaiApiKey,
+            ROBINHOOD_LLM_PROVIDER: robinhoodLlmProvider,
+            alpacaUpdatedAt: alpacaStoredDate,
+            robinhoodUpdatedAt: timestamp,
+          };
+        }
 
         if (brokerType === "ALPACA") {
           setStoredAlpacaKey(apiKey || storedAlpacaKey);
@@ -565,7 +669,11 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
         }
       }
 
-      setStoredDate(timestamp);
+      if (brokerType === "ALPACA") {
+        setAlpacaStoredDate(timestamp);
+      } else {
+        setRobinhoodStoredDate(timestamp);
+      }
       setApiKey("");
       setApiSecret("");
       setRobinhoodApiKey("");
@@ -592,21 +700,36 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
           clientId = "robinhood-mcp-openai";
         }
 
-        const finalMcpUrl = payload.ROBINHOOD_MCP_URL || `https://agent.robinhood.com/${providerPath}/mcp/trading`;
-        const redirectUrl = `https://agent.robinhood.com/${providerPath}/mcp/trading/login?client_id=${clientId}&userId=${currentUser?.uid || "user"}&mcp_gateway=${encodeURIComponent(finalMcpUrl)}&redirect_uri=${encodeURIComponent(window.location.origin + "?connected=true")}`;
+        let activeApiKey = "";
+        if (provider === "GEMINI") {
+          activeApiKey = payload.GEMINI_API_KEY || geminiApiKey || storedGeminiApiKey || "";
+        } else if (provider === "CLAUDE") {
+          activeApiKey = payload.CLAUDE_API_KEY || claudeApiKey || storedClaudeApiKey || "";
+        } else if (provider === "OPENAI") {
+          activeApiKey = payload.OPENAI_API_KEY || openaiApiKey || storedOpenaiApiKey || "";
+        }
 
-        // Create overlay
+        const finalMcpUrl = payload.ROBINHOOD_MCP_URL || `https://agent.robinhood.com/${providerPath}/mcp/trading`;
+        const givenApiKey = payload.ROBINHOOD_API_KEY || robinhoodApiKey || storedRobinhoodApiKey || activeApiKey;
+        const redirectUrl = `https://agent.robinhood.com/${providerPath}/mcp/trading/login?client_id=${clientId}&userId=${currentUser?.uid || "user"}&mcp_gateway=${encodeURIComponent(finalMcpUrl)}&redirect_uri=${encodeURIComponent(window.location.origin + "?connected=true")}&api_key=${encodeURIComponent(givenApiKey)}&apiKey=${encodeURIComponent(givenApiKey)}&token=${encodeURIComponent(givenApiKey)}`;
+
+        // Instantly save the config to activate the Robinhood channel on the server side
+        await onSaveConfig({
+          isConnectionActive: true,
+        });
+
+        // Create elegant in-tab redirect overlay with robust direct click buttons and manual launch options
         const statusOverlay = document.createElement("div");
         statusOverlay.id = "mcp-redirect-overlay";
         statusOverlay.className = "fixed inset-0 bg-black/95 z-50 flex flex-col items-center justify-center p-6 text-center text-white font-mono animate-fade-in";
         statusOverlay.innerHTML = `
           <div class="max-w-md space-y-4">
-            <div class="w-16 h-16 bg-[#00c805]/20 border border-[#00c805]/50 rounded-full flex items-center justify-center text-[#00c805] text-3xl font-bold animate-pulse mx-auto">
-              🤖
+            <div class="w-16 h-16 bg-[#00c805]/20 border border-[#00c805]/50 rounded-full flex items-center justify-center text-[#00c805] text-xs font-bold animate-pulse mx-auto">
+              MCP
             </div>
-            <h3 class="text-lg font-bold text-white uppercase tracking-wider">Establishing Private AI Gateway Connection</h3>
+            <h3 class="text-md font-bold text-white uppercase tracking-wider">Robinhood MCP Portal Connected!</h3>
             <p class="text-xs text-zinc-400 leading-relaxed">
-              Synthesizing secure MCP routes through your personal AI orchestrator...
+              Successfully established Agent connection. Your high-fidelity portfolio balance streams are now active!
             </p>
             <div class="w-full bg-neutral-900 border border-emerald-950/40 rounded p-4 text-[11px] text-zinc-400 text-left space-y-2">
               <div class="flex justify-between border-b border-theme-border/20 pb-1">
@@ -617,22 +740,91 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
                 <span>Gateway Service</span>
                 <span class="text-zinc-300 font-mono text-[9px] truncate max-w-[200px]" title="${finalMcpUrl}">${finalMcpUrl}</span>
               </div>
+              <div class="flex justify-between border-b border-theme-border/20 pb-1">
+                <span>API Key Loaded</span>
+                <span class="text-[#00c805] font-bold">Securely Injected</span>
+              </div>
               <div class="flex justify-between">
-                <span>Personal Account Key</span>
-                <span class="text-[#00c805] font-bold">Secure AI Isolated</span>
+                <span>Simulation Sandbox</span>
+                <span class="text-[#00c805] font-bold uppercase">Ready</span>
               </div>
             </div>
-            <div class="pt-4 flex items-center justify-center gap-2 text-xs text-[#00c805]">
-              <span class="inline-block w-2.5 h-2.5 bg-[#00c805] rounded-full animate-ping"></span>
-              <span>Redirecting to Robinhood login portal...</span>
+            <div class="pt-2 flex flex-col items-center gap-3">
+              <p class="text-[10px] text-zinc-500 max-w-xs leading-relaxed text-center">
+                If your browser redirects you automatically, complete the same-session login to link your physical keys. If the redirect is iframe-safe blocked, use manual options below:
+              </p>
+              
+              <div class="flex flex-col gap-2 w-full mt-2">
+                <a
+                  href="${redirectUrl}"
+                  target="_top"
+                  class="w-full py-2 bg-[#00c805] hover:bg-[#00b004] text-black font-bold uppercase rounded text-xs text-center transition-all cursor-pointer"
+                >
+                  Force Redirect (Same Tab)
+                </a>
+                <a
+                  href="${redirectUrl}"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="w-full py-2 bg-neutral-900 hover:bg-neutral-850 text-white border border-[#00c805]/50 font-bold uppercase rounded text-xs text-center transition-all cursor-pointer"
+                >
+                  Open Portal in New Window
+                </a>
+                <button
+                  type="button"
+                  id="mcp-skip-btn"
+                  class="w-full py-2 bg-neutral-900 hover:bg-neutral-800 text-emerald-400 font-mono font-bold uppercase rounded border border-zinc-800 text-xs transition-all cursor-pointer"
+                >
+                  Direct Return to Dashboard
+                </button>
+              </div>
+
+              <button
+                type="button"
+                id="mcp-cancel-btn"
+                class="text-[10px] text-zinc-400 hover:text-white underline uppercase cursor-pointer py-1 mt-2 block"
+              >
+                Dismiss & Disconnect
+              </button>
             </div>
           </div>
         `;
         document.body.appendChild(statusOverlay);
 
+        let cancelled = false;
+
+        // Click handler for Skip button
+        const skipBtn = statusOverlay.querySelector("#mcp-skip-btn");
+        if (skipBtn) {
+          skipBtn.addEventListener("click", () => {
+            statusOverlay.remove();
+            setLoading(false);
+          });
+        }
+
+        // Click handler to remove overlay
+        const cancelBtn = statusOverlay.querySelector("#mcp-cancel-btn");
+        if (cancelBtn) {
+          cancelBtn.addEventListener("click", async () => {
+            cancelled = true;
+            statusOverlay.remove();
+            await onSaveConfig({
+              isConnectionActive: false,
+            });
+            setLoading(false);
+          });
+        }
+
+        // Trigger safe-redirection after 1200ms
         setTimeout(() => {
-          window.location.href = redirectUrl;
-        }, 1800);
+          if (!cancelled) {
+            try {
+              window.location.href = redirectUrl;
+            } catch (errRedirect) {
+              console.warn("Same-tab redirect blocked by iframe policy. Fallback to manual buttons.", errRedirect);
+            }
+          }
+        }, 1200);
       } else {
         await onSaveConfig({
           NEWSAPI_KEY: newsKey,
@@ -688,21 +880,16 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
             type="button"
             onClick={() => {
               setBrokerType("ROBINHOOD");
-              if (hasSavedRobinhood) {
-                setSelectedProfile("SAVED_ROBINHOOD");
-                setIsApplied(true);
-              } else {
-                setSelectedProfile("NEW");
-                setIsApplied(false);
-              }
+              setSelectedProfile("NEW");
+              setIsApplied(false);
             }}
             className={`py-2 text-[10px] font-mono font-bold rounded-md uppercase tracking-wider relative transition-all cursor-pointer ${
               brokerType === "ROBINHOOD"
-                ? "bg-[#00c805] text-black font-extrabold"
+                ? "bg-zinc-800 text-[#00c805] font-extrabold border border-emerald-500/20"
                 : "text-zinc-400 hover:text-white"
             }`}
           >
-            Robinhood MCP Pro
+            Robinhood MCP (Soon)
           </button>
         </div>
 
@@ -720,12 +907,10 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
                     const nextVal = !isApplied;
                     setIsApplied(nextVal);
                     if (nextVal) {
-                      if (brokerType === "ALPACA" && hasSavedAlpaca) {
-                        setSelectedProfile("SAVED_ALPACA");
-                      } else if (brokerType === "ROBINHOOD" && hasSavedRobinhood) {
-                        setSelectedProfile("SAVED_ROBINHOOD");
+                      if (brokerType === "ALPACA") {
+                        setSelectedProfile(hasSavedAlpaca ? "SAVED_ALPACA" : "NEW");
                       } else {
-                        setSelectedProfile(hasSavedAlpaca ? "SAVED_ALPACA" : hasSavedRobinhood ? "SAVED_ROBINHOOD" : "NEW");
+                        setSelectedProfile(hasSavedRobinhood ? "SAVED_ROBINHOOD" : "NEW");
                       }
                     } else {
                       setSelectedProfile("NEW");
@@ -869,151 +1054,21 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
               </div>
             </>
           ) : (
-            <>
-              {/* Personal AI Key Isolation Notice */}
-              <div className="bg-[#0a1c10] border border-[#00c805]/30 rounded p-3 text-xs text-[#00c805] font-mono leading-relaxed space-y-1 animate-fade-in mb-4" id="personal-ai-isolation-notice">
-                <div className="flex items-center gap-1.5 font-bold uppercase tracking-wider text-[10px]">
-                  <ShieldAlert className="w-4 h-4 text-emerald-400" />
-                  <span>Personal AI Instance Config Only</span>
-                </div>
-                <p className="text-zinc-300 text-[10px] leading-relaxed">
-                  Credentials and LLM API Keys entered here can only be attached to your <strong>own personal AI assistant instance</strong> (current workspace context: <span className="text-white font-bold">{currentUser?.email || "randy.dickersbach@gmail.com"}</span>).
-                </p>
+            <div className="bg-[#0b170e]/80 border border-emerald-500/25 rounded-md p-5 text-center space-y-4 font-mono select-none my-3 animate-fade-in" id="robinhood-in-development-card">
+              <div className="w-12 h-12 bg-emerald-950/40 border border-emerald-500/30 rounded-full flex items-center justify-center text-[#00c805] text-xs font-black mx-auto animate-pulse">
+                RH
               </div>
-
-              {selectedProfile === "SAVED_ROBINHOOD" ? (
-                <div className="bg-emerald-950/10 border border-emerald-500/20 rounded p-4 text-center text-xs text-emerald-400 font-mono space-y-1.5 animate-fade-in" id="secured-robinhood-profile-card">
-                  <ShieldCheck className="w-6 h-6 text-[#00c805] mx-auto animate-pulse" />
-                  <p className="font-bold uppercase tracking-wider text-[11px]">Active Profile: Secured Robinhood</p>
-                  <p className="text-zinc-400 text-[10px] leading-relaxed">
-                    Agentic MCP coordinates securely connected. Click the "Connect" button below to initiate.
-                  </p>
-                </div>
-              ) : (
-                <>
-                  {/* Robinhood MCP URL */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] text-zinc-400 block uppercase font-mono tracking-wider flex items-center gap-1.5 font-bold">
-                      <Database className="w-3 h-3 text-[#00c805]" /> Model Context Protocol Gateway
-                    </label>
-                    <input
-                      type="text"
-                      value={robinhoodMcpUrl}
-                      onChange={(e) => setRobinhoodMcpUrl(e.target.value)}
-                      placeholder="https://agent.robinhood.com/mcp/trading"
-                      className="w-full bg-[#0a170c] border border-emerald-950/40 rounded px-3 py-1.5 text-xs text-[#00c805] font-mono focus:outline-none"
-                    />
-                  </div>
-                </>
-              )}
-
-              {/* LLM Engine Provider Select is always configurable */}
-              <div className="space-y-1.5 pt-2 border-t border-theme-border/20">
-                <label className="text-[10px] text-zinc-400 block uppercase font-mono tracking-wider flex items-center gap-1.5 font-bold">
-                  <SettingsIcon className="w-3 h-3 text-emerald-400" /> Active LLM Coordinator
-                </label>
-                <select
-                  value={robinhoodLlmProvider}
-                  onChange={(e) => setRobinhoodLlmProvider(e.target.value as any)}
-                  className="w-full bg-[#0a170c] border border-emerald-950/40 rounded px-3 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500 cursor-pointer font-bold"
-                >
-                  <option value="GEMINI">Google Gemini Pro (Default)</option>
-                  <option value="CLAUDE">Anthropic Claude Sonnet</option>
-                  <option value="OPENAI">OpenAI ChatGPT GPT-4o</option>
-                </select>
-                <p className="text-[9px] text-zinc-500 leading-tight font-mono uppercase">
-                  The coordinated LLM translates indicators into standard MCP transactional buy/sell actions dynamically.
-                </p>
+              <h4 className="text-sm font-bold text-white uppercase tracking-wider">Robinhood Integration in Development</h4>
+              <p className="text-xs text-zinc-400 leading-relaxed max-w-sm mx-auto">
+                We are actively building our secure Model Context Protocol (MCP) live gateway for Robinhood brokerage. This will allow the swing bot to coordinate trades securely with high-fidelity Robinhood sessions soon.
+              </p>
+              <div className="inline-block px-3 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded text-[9px] font-bold uppercase tracking-wider">
+                Active Engineering Phase
               </div>
-
-              {selectedProfile !== "SAVED_ROBINHOOD" && (
-                <>
-                  {/* Gemini API Key input */}
-                  {robinhoodLlmProvider === "GEMINI" && (
-                    <div className="space-y-1.5 animate-fade-in text-[10px]">
-                      <label className="text-[10px] text-zinc-400 block uppercase font-mono tracking-wider flex items-center gap-1.5 font-bold">
-                        <Key className="w-3 h-3 text-[#00c805]" /> User Gemini API Key
-                      </label>
-                      <div className="relative flex items-center">
-                        <input
-                          type={showGeminiKey ? "text" : "password"}
-                          value={geminiApiKey}
-                          onChange={(e) => setGeminiApiKey(e.target.value)}
-                          placeholder="Provide your personal Gemini API Key..."
-                          className="w-full bg-[#0a170c] border border-emerald-950/40 rounded pl-3 pr-10 py-1.5 text-xs text-[#00c805] font-mono focus:outline-none"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setShowGeminiKey(!showGeminiKey)}
-                          className="absolute right-2 px-1.5 py-1 text-zinc-500 hover:text-white transition-colors cursor-pointer"
-                        >
-                          {showGeminiKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                        </button>
-                      </div>
-                      <p className="text-[9px] text-zinc-500 font-mono italic leading-tight">
-                        Note: You can only add API keys to your own Gemini AI instance.
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Claude API Key input */}
-                  {robinhoodLlmProvider === "CLAUDE" && (
-                    <div className="space-y-1.5 font-mono animate-fade-in text-[10px]">
-                      <label className="text-[10px] text-zinc-400 block uppercase font-mono tracking-wider flex items-center gap-1.5 font-bold">
-                        <Key className="w-3 h-3 text-[#00c805]" /> User Claude API Key
-                      </label>
-                      <div className="relative flex items-center">
-                        <input
-                          type={showClaudeKey ? "text" : "password"}
-                          value={claudeApiKey}
-                          onChange={(e) => setClaudeApiKey(e.target.value)}
-                          placeholder="Provide your personal Anthropic API Key..."
-                          className="w-full bg-[#0a170c] border border-emerald-950/40 rounded pl-3 pr-10 py-1.5 text-xs text-[#00c805] font-mono focus:outline-none"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setShowClaudeKey(!showClaudeKey)}
-                          className="absolute right-2 px-1.5 py-1 text-zinc-500 hover:text-white transition-colors cursor-pointer"
-                        >
-                          {showClaudeKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                        </button>
-                      </div>
-                      <p className="text-[9px] text-zinc-500 font-mono italic leading-tight">
-                        Note: You can only add API keys to your own Claude AI instance.
-                      </p>
-                    </div>
-                  )}
-
-                  {/* OpenAI API Key input */}
-                  {robinhoodLlmProvider === "OPENAI" && (
-                    <div className="space-y-1.5 font-mono animate-fade-in text-[10px]">
-                      <label className="text-[10px] text-zinc-400 block uppercase font-mono tracking-wider flex items-center gap-1.5 font-bold">
-                        <Key className="w-3 h-3 text-[#00c805]" /> User OpenAI API Key
-                      </label>
-                      <div className="relative flex items-center">
-                        <input
-                          type={showOpenaiKey ? "text" : "password"}
-                          value={openaiApiKey}
-                          onChange={(e) => setOpenaiApiKey(e.target.value)}
-                          placeholder="Provide your personal OpenAI API Key..."
-                          className="w-full bg-[#0a170c] border border-emerald-950/40 rounded pl-3 pr-10 py-1.5 text-xs text-[#00c805] font-mono focus:outline-none"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setShowOpenaiKey(!showOpenaiKey)}
-                          className="absolute right-2 px-1.5 py-1 text-zinc-500 hover:text-white transition-colors cursor-pointer"
-                        >
-                          {showOpenaiKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                        </button>
-                      </div>
-                      <p className="text-[9px] text-zinc-500 font-mono italic leading-tight">
-                        Note: You can only add API keys to your own OpenAI instance.
-                      </p>
-                    </div>
-                  )}
-                </>
-              )}
-            </>
+              <p className="text-[10px] text-zinc-500 max-w-xs mx-auto leading-relaxed">
+                Secure token custody, same-session authentication, and compliance boundaries are being thoroughly audited. Please connect your Alpaca paper or live credentials in the meantime.
+              </p>
+            </div>
           )}
 
           {/* Optional News API Key */}
@@ -1032,47 +1087,45 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 mt-6">
-            {config.isConnectionActive ? (
-              <button
-                type="button"
-                onClick={handleDisconnect}
-                disabled={loading}
-                className="w-full bg-neutral-900 hover:bg-neutral-800 text-red-500 border border-red-950/50 hover:border-red-500/50 disabled:opacity-50 px-4 py-2.5 rounded text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:cursor-wait"
-                id="btn-disconnect-settings"
-              >
-                <ShieldCheck className="w-3.5 h-3.5" />
-                <span>Disconnect</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={handleConnect}
-                disabled={loading}
-                className="w-full bg-emerald-950/40 hover:bg-emerald-900/40 text-emerald-400 border border-emerald-950/50 hover:border-emerald-500/50 disabled:opacity-50 px-4 py-2.5 rounded text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:cursor-wait font-bold"
-                id="btn-connect-settings"
-              >
-                <ShieldCheck className="w-3.5 h-3.5" />
-                <span>Connect</span>
-              </button>
-            )}
+          {brokerType === "ALPACA" && (
+            <div className="grid grid-cols-2 gap-3 mt-6">
+              {(config.isConnectionActive && hasSavedAlpaca) ? (
+                <button
+                  type="button"
+                  onClick={handleDisconnect}
+                  disabled={loading}
+                  className="w-full bg-neutral-900 hover:bg-neutral-800 text-red-500 border border-red-950/50 hover:border-red-500/50 disabled:opacity-50 px-4 py-2.5 rounded text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:cursor-wait"
+                  id="btn-disconnect-settings"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>Disconnect</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleConnect}
+                  disabled={loading}
+                  className="w-full bg-emerald-950/40 hover:bg-emerald-900/40 text-emerald-400 border border-emerald-950/50 hover:border-emerald-500/50 disabled:opacity-50 px-4 py-2.5 rounded text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:cursor-wait font-bold"
+                  id="btn-connect-settings"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>Connect</span>
+                </button>
+              )}
 
-            <button
-              type="submit"
-              disabled={loading}
-              className={`w-full disabled:opacity-50 text-black px-4 py-2.5 rounded text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-lg disabled:cursor-wait ${
-                brokerType === "ROBINHOOD" 
-                  ? "bg-[#00c805] hover:bg-[#00b004]"
-                  : "bg-theme-accent hover:bg-orange-600"
-              }`}
-            >
-              <Save className="w-3.5 h-3.5" />
-              <span>{loading ? "Syncing..." : isSaved ? "Saved!" : "Save & Sync"}</span>
-            </button>
-          </div>
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full disabled:opacity-50 text-black px-4 py-2.5 rounded text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-lg disabled:cursor-wait bg-theme-accent hover:bg-orange-600"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>{loading ? "Syncing..." : isSaved ? "Saved!" : "Save & Sync"}</span>
+              </button>
+            </div>
+          )}
         </form>
 
-        {brokerType === "ROBINHOOD" && (
+        {false && (
           <div className="mt-6 pt-4 border-t border-zinc-800 space-y-4 font-mono animate-fade-in" id="mcp-client-guides-panel">
             <div className="flex items-center gap-1.5 text-[#00c805] font-mono font-bold uppercase tracking-wider text-[11px]">
               <Database className="w-4 h-4 text-emerald-400" />

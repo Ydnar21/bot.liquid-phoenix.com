@@ -14,14 +14,14 @@ export default function LogsConsole({ logs, onClearLogs }: LogsConsoleProps) {
         <div className="flex items-center gap-2">
           <Terminal className="w-4 h-4 text-theme-accent" />
           <h2 className="text-[10px] font-black text-white uppercase tracking-widest font-mono">
-            TACTICAL BOT FLIGHT MONITOR LOGS
+            TACTICAL BOT LOG
           </h2>
         </div>
         {logs.length > 0 && (
           <button
             onClick={onClearLogs}
             className="text-gray-500 hover:text-white transition-colors p-1.5 hover:bg-theme-input rounded cursor-pointer"
-            title="Clear Flight Terminal Logs"
+            title="Clear Tactical Bot Logs"
           >
             <Trash2 className="w-3.5 h-3.5" />
           </button>

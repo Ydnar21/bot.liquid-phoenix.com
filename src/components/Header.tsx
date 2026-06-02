@@ -9,6 +9,8 @@ interface HeaderProps {
   onTriggerScan: () => void;
   isScanning: boolean;
   currentUser: any;
+  username?: string;
+  onOpenUsernameSetup?: () => void;
   onSignOut: () => void;
   alpacaAccount?: any;
 }
@@ -20,6 +22,8 @@ export default function Header({
   onTriggerScan,
   isScanning,
   currentUser,
+  username,
+  onOpenUsernameSetup,
   onSignOut,
   alpacaAccount,
 }: HeaderProps) {
@@ -157,7 +161,7 @@ export default function Header({
 
           {isAnyActive && alpacaAccount && alpacaAccount.status === "error" && (
             <div className="flex items-center gap-1.5 bg-rose-500/10 border border-rose-500/20 px-3 py-1.5 rounded text-[10px] text-rose-400 font-bold font-mono uppercase">
-              <span>⚠️ {alpacaAccount.broker === "ROBINHOOD" ? "Robinhood MCP Revoked" : "Alpaca Access Revoked"}</span>
+              <span>{alpacaAccount.broker === "ROBINHOOD" ? "Robinhood MCP Revoked" : "Alpaca Access Revoked"}</span>
             </div>
           )}
 
@@ -217,12 +221,18 @@ export default function Header({
                 </div>
               )}
               <div className="text-left leading-tight">
-                <div className="text-gray-100 font-mono text-[10px] font-bold max-w-[120px] truncate">
-                  {currentUser.displayName || currentUser.email?.split("@")[0]}
-                </div>
+                <button
+                  type="button"
+                  onClick={onOpenUsernameSetup}
+                  className="text-gray-100 font-mono text-[10px] font-bold max-w-[140px] truncate hover:text-theme-accent transition-colors flex items-center gap-1.5 cursor-pointer text-left focus:outline-none"
+                  title="Change Username / User ID"
+                >
+                  <span>@{username || "no_username"}</span>
+                  <span className="text-[8px] text-theme-accent font-black border border-theme-accent/20 px-1 py-0.2 rounded font-sans uppercase">edit</span>
+                </button>
                 <button
                   onClick={onSignOut}
-                  className="text-rose-400 hover:text-rose-300 transition-colors font-mono font-bold text-[9px] uppercase cursor-pointer block hover:underline"
+                  className="text-rose-400 hover:text-rose-300 transition-colors font-mono font-bold text-[9px] uppercase cursor-pointer block hover:underline mt-0.5 text-left"
                 >
                   Sign Out
                 </button>

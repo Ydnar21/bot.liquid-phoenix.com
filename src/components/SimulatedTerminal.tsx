@@ -17,6 +17,9 @@ interface OutputLine {
   timestamp: string;
 }
 
+// In-Memory Failover Fallback Cache for virtual filesystem (No localStorage)
+const inMemoryFsCache: Record<string, Record<string, VirtualFile>> = {};
+
 interface SimulatedTerminalProps {
   botConfig: BotConfig;
   botState: BotState;
@@ -71,12 +74,15 @@ export default function SimulatedTerminal({
     const userId = currentUser?.uid;
     const fsRef = doc(db, "users", userId, "terminal_v1", "filesystem");
 
+    let loadedFiles: Record<string, VirtualFile> | null = null;
+    let usingFallback = false;
+
     try {
       const snap = await getDoc(fsRef);
       if (snap.exists() && snap.data().files) {
-        setFiles(snap.data().files);
+        loadedFiles = snap.data().files;
       } else {
-        // Bootstrap standard terminal workspace files if not existing
+        // Bootstrap standard terminal workspace files if not existing in Cloud
         const defaultFiles: Record<string, VirtualFile> = {
           "README.md": {
             name: "README.md",
@@ -103,9 +109,59 @@ export default function SimulatedTerminal({
             size: 388,
           },
         };
-        await setDoc(fsRef, { files: defaultFiles }, { merge: true });
-        setFiles(defaultFiles);
+        try {
+          await setDoc(fsRef, { files: defaultFiles }, { merge: true });
+        } catch (setErr) {
+          console.warn("Failed to write bootstrap to cloud Firestore:", setErr);
+        }
+        loadedFiles = defaultFiles;
       }
+    } catch (err: any) {
+      console.warn("Firestore terminal load bypassed on database error/permission restrictions. Activating sandbox fallback:", err.message);
+      usingFallback = true;
+
+      // Safe In-Memory Failover Fallback Handler (No localStorage)
+      const cacheKey = userId || "guest";
+      if (inMemoryFsCache[cacheKey]) {
+        loadedFiles = inMemoryFsCache[cacheKey];
+      }
+
+      if (!loadedFiles) {
+        loadedFiles = {
+          "README.md": {
+            name: "README.md",
+            content: `# Liquid Phoenix Sentry Terminal Node v1.0.4\n\nThis is your private, isolated sandboxed trading container running securely on the cloud. Everything here belongs strictly to you.\n\n### Core Container Rules & Commands:\n1. Run "help" to review all console commands.\n2. Execute "neofetch" to inspect your simulated cloud VM specifications.\n3. Type "nano <filename>" or "edit <filename>" to open the immersive terminal file editor.\n4. Execute Python strategy scripts using "python <filename>".\n5. Run "balance" or "wallet" to poll brokerage accounts.\n6. Run "scan" to evaluate standard universe RSI indicators directly through CLI.`,
+            updatedAt: new Date().toISOString(),
+            size: 610,
+          },
+          "custom_momentum.py": {
+            name: "custom_momentum.py",
+            content: `import os\nimport time\nimport phoenix_sentry as ps\n\ndef run_strategy(): \n    print("[STRATEGY] Initializing custom momentum models...")\n    time.sleep(1)\n    rsi = ps.get_rsi("AAPL")\n    print(f"[STRATEGY] Current symbol RSI calculated: {rsi}")\n    if rsi < 35:\n        print("[STRATEGY] BUY TRIGGER MATCHED: RSI oversold!")\n        ps.place_order("AAPL", qty=10, side="buy")\n    else:\n        print("[STRATEGY] HOLD TRIGGER: No action needed.")\n\nrun_strategy()`,
+            updatedAt: new Date().toISOString(),
+            size: 474,
+          },
+          "credentials.env": {
+            name: "credentials.env",
+            content: `ALPACA_PUBLIC_KEY=${botConfig.ALPACA_API_KEY ? "****************" + botConfig.ALPACA_API_KEY.slice(-4) : "NOT_CONFIGURED"}\nALPACA_SECRET_KEY=${botConfig.ALPACA_SECRET_KEY ? "****************" + botConfig.ALPACA_SECRET_KEY.slice(-4) : "****************"}\nNEWSAPI_KEY=${botConfig.NEWSAPI_KEY ? "****************" + botConfig.NEWSAPI_KEY.slice(-4) : "****************"}\nDEFAULT_BROKER=${alpacaAccount?.broker || "ALPACA"}\nMARKET_SESSION=${botState.isMarketOpen ? "OPEN" : "CLOSED"}\nSENTRY_SYNC_ACTIVE=TRUE`,
+            updatedAt: new Date().toISOString(),
+            size: 275,
+          },
+          "test_sweep.sh": {
+            name: "test_sweep.sh",
+            content: `#!/bin/bash\necho "==== Starting Portfolio Integrity Sweep ===="\necho "Checking secure API socket connection..."\necho "Alpaca API Endpoint: ${botConfig.ALPACA_BASE_URL}"\necho "Bot state: ${botConfig.isBotRunning ? "ACTIVE" : "PAUSED"}"\necho "FOMC Shield: ${botState.fomcBlackout ? "SHIELD ACTIVE" : "SHIELD STANDBY"}"\necho "Sweep completed with exit status 0."`,
+            updatedAt: new Date().toISOString(),
+            size: 388,
+          },
+        };
+      }
+    }
+
+    if (loadedFiles) {
+      setFiles(loadedFiles);
+      
+      // Store in memory cache
+      const cacheKey = userId || "guest";
+      inMemoryFsCache[cacheKey] = loadedFiles;
 
       // Output introductory shell lines
       const welcomeLines: OutputLine[] = [
@@ -125,7 +181,9 @@ export default function SimulatedTerminal({
           timestamp: new Date().toISOString(),
         },
         {
-          text: `* Persistent Cloud Storage: Secured in firestore partition (users/${currentUser?.uid?.substring(0, 6)}.../terminal)`,
+          text: usingFallback
+            ? `* Sandbox Client-Side Storage: Active (Database permission-denied bypassed, data isolated to local workspace storage)`
+            : `* Persistent Cloud Storage: Secured in firestore partition (users/${currentUser?.uid?.substring(0, 6)}.../terminal)`,
           type: "info",
           timestamp: new Date().toISOString(),
         },
@@ -136,28 +194,24 @@ export default function SimulatedTerminal({
         },
       ];
       setOutput(welcomeLines);
-    } catch (err: any) {
-      console.error("Failed to load simulated terminal fs:", err);
-      setOutput([
-        {
-          text: `ERROR: Failed to establish secure connection to simulated terminal cloud node filesystem: ${err.message}`,
-          type: "stderr",
-          timestamp: new Date().toISOString(),
-        },
-      ]);
-    } finally {
-      setLoading(false);
     }
+    setLoading(false);
   };
 
   const saveWorkspaceFiles = async (updatedFiles: Record<string, VirtualFile>) => {
     setFiles(updatedFiles);
     const userId = currentUser?.uid;
     const fsRef = doc(db, "users", userId, "terminal_v1", "filesystem");
+
+    // Persist to in memory cache first
+    const cacheKey = userId || "guest";
+    inMemoryFsCache[cacheKey] = updatedFiles;
+
+    // Asynchronously try to sync to Firestore, swallow any permissions error silently
     try {
       await setDoc(fsRef, { files: updatedFiles }, { merge: true });
     } catch (err: any) {
-      console.error("Terminal filesystem sync fail:", err);
+      console.warn("Terminal filesystem cloud backup ignored (using browser container):", err.message);
     }
   };
 
@@ -708,7 +762,7 @@ export default function SimulatedTerminal({
 
       {/* Console details summary */}
       <p className="text-[10px] sm:text-xs text-gray-500 font-mono leading-relaxed leading-relaxed bg-black/30 p-4 border border-theme-border/50 rounded-lg">
-        💡 <strong>Pro Hacker Tip:</strong> You can edit raw parameters in <code>credentials.env</code>, or draft actual custom scripts using python! File modifications are persisted dynamically in your private cloud sandbox. Use <code>help</code> to view options.
+        <strong>Pro Hacker Tip:</strong> You can edit raw parameters in <code>credentials.env</code>, or draft actual custom scripts using python! File modifications are persisted dynamically in your private cloud sandbox. Use <code>help</code> to view options.
       </p>
     </div>
   );

@@ -135,7 +135,7 @@ export default function PerformanceHistory({ history }: PerformanceHistoryProps)
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4 pt-4 border-t border-theme-border/30 text-[11px] font-mono">
               {bestTrade && (
                 <div className="flex items-center justify-between text-gray-400">
-                  <span className="uppercase text-[9px] text-gray-500">🏆 Top Performing Run</span>
+                  <span className="uppercase text-[9px] text-gray-500">Top Performing Run</span>
                   <span className="text-emerald-400 font-bold uppercase">
                     {bestTrade.symbol}: +${bestTrade.pl.toFixed(2)} ({bestTrade.plPct.toFixed(2)}%)
                   </span>
@@ -143,7 +143,7 @@ export default function PerformanceHistory({ history }: PerformanceHistoryProps)
               )}
               {worstTrade && (
                 <div className="flex items-center justify-between text-gray-400">
-                  <span className="uppercase text-[9px] text-gray-500">⚠️ Underperforming Run</span>
+                  <span className="uppercase text-[9px] text-gray-500">Underperforming Run</span>
                   <span className="text-rose-400 font-bold uppercase">
                     {worstTrade.symbol}: ${worstTrade.pl.toFixed(2)} ({worstTrade.plPct.toFixed(2)}%)
                   </span>

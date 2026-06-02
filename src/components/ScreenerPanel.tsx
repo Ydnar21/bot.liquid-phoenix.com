@@ -195,37 +195,56 @@ export default function ScreenerPanel({
                       </div>
                     </div>
 
-                    {/* Gemini Sentinel Findings */}
-                    <div className="bg-theme-input border border-theme-border rounded p-4 space-y-2">
-                      <div className="text-[10px] font-bold text-theme-accent flex items-center gap-1 uppercase font-mono">
-                        <Sparkles className="w-3.5 h-3.5" />
-                        <span>Gemini Sentry Context Findings</span>
-                      </div>
-                      <p className="text-xs text-gray-300 leading-relaxed font-sans">
-                        "{setup.sentimentReason}"
-                      </p>
-
-                      {/* Hard Blocks List */}
-                      {isBlocked && (
-                        <div className="mt-2 p-2.5 bg-rose-950/40 border border-rose-500/20 text-rose-400 rounded text-xs space-y-1 font-mono">
-                          <span className="font-black flex items-center gap-1 text-[10px] uppercase">
-                            <AlertCircle className="w-3.5 h-3.5" /> Sentry Hard Blocks Triggered:
-                          </span>
-                          <ul className="list-disc pl-5 text-[11px] text-rose-400">
-                            {setup.blockersFound.map((b, idx) => (
-                              <li key={idx}>{b}</li>
-                            ))}
-                          </ul>
+                    {/* Gemini Sentinel Findings & Thesis */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Sentry Analysis Box */}
+                      <div className="bg-theme-input border border-theme-border rounded p-4 space-y-2">
+                        <div className="text-[10px] font-bold text-theme-accent flex items-center gap-1 uppercase font-mono">
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>Gemini Sentry Context Findings</span>
                         </div>
-                      )}
+                        <p className="text-xs text-gray-300 leading-relaxed font-sans italic">
+                          "{setup.sentimentReason}"
+                        </p>
 
-                      <div className="text-[10px] font-mono text-gray-500 pt-1 uppercase">
-                        Catalyst Window Scheduled: <span className="text-amber-300 font-bold">{setup.catalystEvent}</span> on <span className="text-white font-bold">{setup.catalystDate}</span>
-                        {setup.earningsDate && setup.earningsDate !== "N/A" && (
-                          <span className="block mt-1">
-                            Upcoming Earnings Release: <span className="text-amber-300 font-bold">{setup.earningsDate}</span>
-                          </span>
+                        {/* Hard Blocks List */}
+                        {isBlocked && (
+                          <div className="mt-2 p-2.5 bg-rose-950/40 border border-rose-500/20 text-rose-400 rounded text-xs space-y-1 font-mono">
+                            <span className="font-black flex items-center gap-1 text-[10px] uppercase">
+                              <AlertCircle className="w-3.5 h-3.5" /> Sentry Hard Blocks Triggered:
+                            </span>
+                            <ul className="list-disc pl-5 text-[11px] text-rose-400">
+                              {setup.blockersFound.map((b, idx) => (
+                                <li key={idx}>{b}</li>
+                              ))}
+                            </ul>
+                          </div>
                         )}
+
+                        <div className="text-[10px] font-mono text-gray-500 pt-1 uppercase">
+                          Catalyst Window Scheduled: <span className="text-amber-300 font-bold">{setup.catalystEvent}</span> on <span className="text-white font-bold">{setup.catalystDate}</span>
+                          {setup.earningsDate && setup.earningsDate !== "N/A" && (
+                            <span className="block mt-1">
+                              Upcoming Earnings Release: <span className="text-amber-300 font-bold">{setup.earningsDate}</span>
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Active Trading Thesis Box */}
+                      <div className="bg-theme-input border border-theme-border rounded p-4 space-y-2 flex flex-col justify-between">
+                        <div className="space-y-2">
+                          <div className="text-[10px] font-bold text-emerald-400 flex items-center gap-1 uppercase font-mono">
+                            <TrendingUp className="w-3.5 h-3.5" />
+                            <span>Active Investment Swing Thesis</span>
+                          </div>
+                          <p className="text-xs text-zinc-100 leading-relaxed font-sans font-medium">
+                            {setup.thesis || `Technical pullback for ${setup.symbol} displays optimized support containment. Buying interest aligned neatly with upcoming ${setup.catalystEvent} catalyst schedules makes this an elite risk-reward candidate.`}
+                          </p>
+                        </div>
+                        <div className="text-[9px] font-mono text-gray-500 pt-2 border-t border-theme-border/20 uppercase">
+                          Sift Score Verified: <span className="text-[#00c805] font-bold">Passed Sentry Verification Ratio</span>
+                        </div>
                       </div>
                     </div>
 

@@ -20,6 +20,11 @@ import {
   addLog,
   getUserAccount,
   ensureUserCredentialsLoaded,
+  syncActivePositionWithLiveTrades,
+  generateAIOfferings,
+  registerAndVerifyUsername,
+  getRegisteredUsername,
+  getLeaderboardRankings,
 } from "./src/server_bot.js";
 
 async function startServer() {
@@ -146,8 +151,12 @@ async function startServer() {
     res.json(getBotState());
   });
 
-  // API 4: Get active position
-  app.get("/api/position", (req, res) => {
+  // API 4: Get active position (forces live synchronization first)
+  app.get("/api/position", async (req, res) => {
+    const userId = req.query.userId as string;
+    if (userId) {
+      await syncActivePositionWithLiveTrades(userId);
+    }
     res.json(getActivePosition());
   });
 
@@ -207,6 +216,40 @@ async function startServer() {
     }
     const result = await getUserAccount(userId);
     res.json(result);
+  });
+  
+  // API 13: Generate AI-based creative swing-trading usernames
+  app.post("/api/generate-usernames", async (req, res) => {
+    const { userId } = req.body || {};
+    const usernames = await generateAIOfferings(userId);
+    res.json({ success: true, usernames });
+  });
+
+  // API 14: Save, verify uniqueness, and enforce monthly limits for custom user ID / username
+  app.post("/api/save-username", async (req, res) => {
+    const { userId, username } = req.body || {};
+    if (!userId || !username) {
+      return res.status(400).json({ error: "Missing userId or username parameters" });
+    }
+    const result = await registerAndVerifyUsername(userId, username);
+    res.json(result);
+  });
+
+  // API 15: Retrieve a user's registered username from either Firestore or secure local fallback registry
+  app.get("/api/get-username", async (req, res) => {
+    const userId = req.query.userId as string;
+    if (!userId) {
+      return res.status(400).json({ error: "Missing userId query parameter" });
+    }
+    const username = await getRegisteredUsername(userId);
+    res.json({ success: true, username });
+  });
+
+  // API 16: Retrieve the dynamic, profit-sorted competitive trader leaderboard
+  app.get("/api/leaderboard", async (req, res) => {
+    const userId = req.query.userId as string;
+    const ranking = await getLeaderboardRankings(userId);
+    res.json({ success: true, ranking });
   });
 
   // Integrated Vite Dev Middleware Vs Production Client Serve

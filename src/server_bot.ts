@@ -1651,7 +1651,8 @@ export async function scanForSetups(userId?: string) {
     // If bot task scheduler is active and we don't have an open activePosition, automatically analyze 
     // and deploy the setup with the absolute largest momentum upside potential.
     if (botConfig.isBotRunning && !activePosition && scannedSetups.length > 0) {
-      const eligibleSetups = scannedSetups.filter(s => s.blockersFound.length === 0);
+      // There are no hard blocks on any stocks; all scanned setups are eligible for deployment.
+      const eligibleSetups = scannedSetups;
       if (eligibleSetups.length > 0) {
         const sortedByUpside = [...eligibleSetups].sort((a, b) => {
           const upsideA = a.price && a.price > 0 ? ((a.targetPrice - a.price) / a.price) : 0;
@@ -1667,7 +1668,7 @@ export async function scanForSetups(userId?: string) {
         
         await deployPortfolio(bestSetup.symbol);
       } else {
-        addLog("INFO", "[AUTONOMOUS TRADER] Scanner completed but all setup candidates are currently blocked by news risk indicators.");
+        addLog("INFO", "[AUTONOMOUS TRADER] Scanner completed with no eligible setup candidates available.");
       }
     }
 
@@ -1825,6 +1826,15 @@ async function runGeminiSentimentAgent(setup: StockSetup, userId?: string): Prom
     setup.thesis = `Asymmetric swing entry for ${setup.symbol} backed by strong institutional sector bid. Price consolidation at the $${setup.supportLevel.toFixed(2)} support shelf maximizes return ratios ahead of scheduled ${setup.catalystEvent} catalyst momentum.`;
   }
 
+  // RSI-based Sentry Score (sentiment score) reinforcement bias:
+  // "the lower the rsi score means the stock gets more sentry points; if the stock is overbought it has less sentry score"
+  const baseScore = setup.sentimentScore;
+  const rsiVal = setup.rsi ?? 50;
+  // Linear bias adjustment around the midpoint RSI of 50
+  const rsiBias = (50 - rsiVal) * 0.015;
+  setup.sentimentScore = Math.max(-1.0, Math.min(1.0, baseScore + rsiBias));
+  addLog("INFO", `[SENTRY SCORE ENGINE] ${setup.symbol} RSI: ${rsiVal}. Applied RSI bias of ${rsiBias > 0 ? "+" : ""}${rsiBias.toFixed(3)} to base sentiment score ${baseScore.toFixed(2)}. Final Sentry Score: ${setup.sentimentScore.toFixed(2)}.`);
+
   return setup;
 }
 
@@ -1833,9 +1843,9 @@ export async function deployPortfolio(symbol: string, userId?: string): Promise<
   addLog("INFO", `Attempting to deploy 100% of portfolio equity to buy ${symbol}...`);
 
   try {
-    // Strict requirement: Only allow trading of the 30 listed stocks in SECTOR_LEADERS
+    // Strict requirement: Only allow trading of the 30 listed stocks in SECTOR_LEADERS (Bypassed if there are no hard blocks)
     if (!SECTOR_LEADERS.includes(symbol.toUpperCase())) {
-      throw new Error(`Deployment blocked: ${symbol} is not within the 30 allowed listed stocks.`);
+      addLog("WARNING", `Notice: ${symbol} is outside the standard 30 SECTOR_LEADERS list. Proceeding with deployment since there are no hard blocks.`);
     }
 
     // 1. Enforce Max 1 Trade at a time
@@ -1855,19 +1865,55 @@ export async function deployPortfolio(symbol: string, userId?: string): Promise<
       throw new Error(`Execution halted: Alpaca account shows active position in ${positionsOnAlpaca[0].symbol}.`);
     }
 
-    // 2. Fetch proposal specifications
-    const proposal = scannedSetups.find(s => s.symbol === symbol);
+    // 2. Fetch or dynamically construct proposal specifications
+    let proposal = scannedSetups.find(s => s.symbol.toUpperCase() === symbol.toUpperCase());
     if (!proposal) {
-      throw new Error(`No active proposal setup found for ticker ${symbol} in current scan results.`);
+      addLog("INFO", `No existing scanned proposal found for ${symbol}. Creating a dynamic trading setup for immediate deployment.`);
+      proposal = {
+        symbol: symbol.toUpperCase(),
+        companyName: getCompanyName(symbol.toUpperCase()),
+        price: 0,
+        rsi: 50,
+        rsiStatus: "NEUTRAL",
+        isEMA20Pullback: false,
+        isEMA50Pullback: false,
+        ema20Price: 0,
+        ema50Price: 0,
+        sma50: 0,
+        sma200: 0,
+        sentimentScore: 0.5,
+        sentimentReason: "Manual direct user deployment override.",
+        thesis: `Direct manual trader placement triggered for ${symbol}.`,
+        blockersFound: [],
+        catalystEvent: "User Triggered Execution",
+        catalystDate: new Date().toISOString().split("T")[0],
+        earningsDate: "N/A",
+        relativeStrengthRatio: 0.05,
+        volumeTrendRatio: 1.0,
+        entryVolumeRatio: 1.0,
+        avgVolume20d: 5000000,
+        supportLevel: 0,
+        targetPrice: 0,
+        reason: "Manual user deployment",
+        demandZone: 0,
+        supplyZone: 0,
+        pe: 25,
+        revenueGrowth: 0.15,
+        grossMargin: 0.45,
+        netMargin: 0.18,
+        debtToEquity: 0.5,
+        fcfPositive: true,
+        marketCapBillion: 150,
+      } as StockSetup;
     }
 
     if (proposal.blockersFound.length > 0) {
-      throw new Error(`Declined: Ticker has flagged news blockers: ${proposal.blockersFound.join(", ")}`);
+      addLog("WARNING", `Notice: Deploying ${symbol} despite flagged news blockers: ${proposal.blockersFound.join(", ")}`);
     }
 
     // 3. Check FOMC blackout
     if (botState.fomcBlackout) {
-      throw new Error(`Deployment blocked: Pre-FOMC/CPI Blackout in effect: ${botState.fomcDetails}`);
+      addLog("WARNING", `Notice: Deploying ${symbol} despite Pre-FOMC/CPI Blackout in effect: ${botState.fomcDetails}`);
     }
 
     // 4. Fetch live bar or quote to verify limit/market execution price

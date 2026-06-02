@@ -61,7 +61,7 @@ export default function ScreenerPanel({
                 key={setup.symbol}
                 className={`border rounded transition-all duration-150 ${
                   isBlocked
-                    ? "bg-black/20 border-rose-950 opacity-60"
+                    ? "bg-theme-input/40 border-amber-500/25 opacity-95"
                     : "bg-theme-input/40 border-theme-border hover:border-theme-accent/50"
                 }`}
               >
@@ -249,25 +249,23 @@ export default function ScreenerPanel({
                     </div>
 
                     {/* Deployment button inside row */}
-                    {!isBlocked && (
-                      <div className="flex items-center justify-between border-t border-theme-border pt-4">
-                        <div className="text-xs font-mono text-rose-400 uppercase">
-                          Predefined Support Floor: ${setup.supportLevel.toFixed(2)}
-                        </div>
-                        <button
-                          disabled={hasActivePosition || isDeploying}
-                          onClick={() => onDeploy(setup.symbol)}
-                          className={`flex items-center gap-1.5 px-5 py-2.5 rounded text-xs font-black uppercase font-mono transition-colors cursor-pointer ${
-                            hasActivePosition
-                              ? "bg-theme-input text-gray-500 border border-theme-border cursor-not-allowed"
-                              : "bg-theme-accent text-black hover:bg-orange-600 shadow"
-                          }`}
-                        >
-                          <Coins className="w-3.5 h-3.5" />
-                          <span>{isDeploying ? "Deploying..." : hasActivePosition ? "Limit reached (1 position max)" : "Deploy 100% Portfolio"}</span>
-                        </button>
+                    <div className="flex items-center justify-between border-t border-theme-border pt-4">
+                      <div className="text-xs font-mono text-rose-400 uppercase">
+                        Predefined Support Floor: ${setup.supportLevel.toFixed(2)}
                       </div>
-                    )}
+                      <button
+                        disabled={hasActivePosition || isDeploying}
+                        onClick={() => onDeploy(setup.symbol)}
+                        className={`flex items-center gap-1.5 px-5 py-2.5 rounded text-xs font-black uppercase font-mono transition-colors cursor-pointer ${
+                          hasActivePosition
+                            ? "bg-theme-input text-gray-500 border border-theme-border cursor-not-allowed"
+                            : "bg-theme-accent text-black hover:bg-orange-600 shadow"
+                        }`}
+                      >
+                        <Coins className="w-3.5 h-3.5" />
+                        <span>{isDeploying ? "Deploying..." : hasActivePosition ? "Limit reached (1 position max)" : "Deploy 100% Portfolio"}</span>
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>

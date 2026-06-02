@@ -2554,7 +2554,72 @@ export async function syncActivePositionWithLiveTrades(userId?: string) {
       } else {
         // If there are no open positions on Alpaca, but we have an activePosition stored in-memory, sync reset
         if (activePosition) {
-          addLog("WARNING", `[SYNC ENGINE] Live Alpaca account has zero open positions, but we had in-memory position ${activePosition.symbol}. Executing dashboard state self-healing sync...`);
+          addLog("WARNING", `[SYNC ENGINE] Live Alpaca account has zero open positions, but we had in-memory position ${activePosition.symbol}. Fetching executed order details from Alpaca to calculate precise realized statistics...`);
+          
+          const symbolObj = activePosition.symbol;
+          let exitPrice = activePosition.currentPrice;
+          let qty = activePosition.qty;
+          let exitedAt = new Date().toISOString();
+          let orderReason = "ALPACA_AUTOMATIC_CLOSE";
+
+          try {
+            const closedOrders = await alpacaUserFetch(creds as any, "/v2/orders?status=closed&limit=30&direction=desc").catch(() => []);
+            if (closedOrders && Array.isArray(closedOrders)) {
+              // Find the most recent filled sell order for this symbol
+              const matchingOrder = closedOrders.find((o: any) => 
+                o.symbol === symbolObj && 
+                o.side === "sell" && 
+                (o.status === "filled" || o.status === "partially_filled")
+              );
+              if (matchingOrder) {
+                exitPrice = parseFloat(matchingOrder.filled_avg_price) || parseFloat(matchingOrder.limit_price) || exitPrice;
+                qty = parseFloat(matchingOrder.filled_qty) || qty;
+                exitedAt = matchingOrder.filled_at || matchingOrder.updated_at || exitedAt;
+                
+                if (matchingOrder.client_order_id) {
+                  if (matchingOrder.client_order_id.includes("STOP_LOSS") || matchingOrder.client_order_id.includes("stop")) {
+                    orderReason = "STOP_LOSS_REACHED";
+                  } else if (matchingOrder.client_order_id.includes("CATALYST") || matchingOrder.client_order_id.includes("catalyst")) {
+                    orderReason = "CATALYST_DAY_SELLING";
+                  }
+                }
+              }
+            }
+          } catch (orderErr: any) {
+            console.warn("[SYNC ENGINE] Could not reconcile closed order details:", orderErr.message);
+          }
+
+          // Fallback reason based on price zone relative to stop-loss support level
+          if (orderReason === "ALPACA_AUTOMATIC_CLOSE") {
+            if (exitPrice <= activePosition.supportLevel * 1.01) {
+              orderReason = "STOP_LOSS_REACHED";
+            } else if (activePosition.catalystDate && new Date().toISOString().split("T")[0] >= activePosition.catalystDate) {
+              orderReason = "CATALYST_DAY_SELLING";
+            }
+          }
+
+          const realizedPl = qty * exitPrice - qty * activePosition.entryPrice;
+          const realizedPlPct = ((exitPrice - activePosition.entryPrice) / activePosition.entryPrice) * 100;
+
+          // Prevent duplicate logs/inserts if this transaction was already recorded in closedTrades
+          const alreadyExists = closedTrades.some(t => t.symbol === symbolObj && Math.abs(t.exitPrice - exitPrice) < 0.001 && Math.abs(t.qty - qty) < 0.001);
+          if (!alreadyExists) {
+            closedTrades.unshift({
+              id: Math.random().toString(36).substr(2, 9),
+              symbol: symbolObj,
+              companyName: activePosition.companyName,
+              entryPrice: activePosition.entryPrice,
+              exitPrice,
+              qty,
+              pl: realizedPl,
+              plPct: realizedPlPct,
+              enteredAt: activePosition.enteredAt,
+              exitedAt,
+              exitReason: orderReason
+            });
+            addLog("SUCCESS", `[SYNC ENGINE] Discovered closed position. Registered REALIZED status for ${symbolObj}: ${realizedPlPct.toFixed(2)}% ($${realizedPl.toFixed(2)}) using Alpaca execution stats.`);
+          }
+
           activePosition = null;
           saveStateToDisk();
         }

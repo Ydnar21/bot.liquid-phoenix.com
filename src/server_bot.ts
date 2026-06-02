@@ -1538,12 +1538,13 @@ export async function scanForSetups(userId?: string) {
         const sdZones = calculateSupplyDemandZones(bars);
         const fun = getFundamentalMetrics(ticker);
 
-        // Define stop-loss floor and dynamic target profit margins
-        const supportLevel = Math.max(ema20 * 0.96, sma200 * 0.97);
-        const targetPrice = Math.max(sdZones.supplyZone, currentPrice * 1.15);
         // Calculate the optimal entry price linked with the supply zone peak resistance.
         // We target an entry at an 8% discount from the supply zone resistance to ensure a high-probability pullback margin.
         const entryPrice = Math.round(Math.min(currentPrice, sdZones.supplyZone * 0.92) * 100) / 100;
+
+        // Stop-loss is strictly -5% on any trade
+        const supportLevel = Math.round(entryPrice * 0.95 * 100) / 100;
+        const targetPrice = Math.max(sdZones.supplyZone, currentPrice * 1.15);
 
         // Relative Strength vs SPY (falling less than spy over past 10 bars)
         const stockReturn10 = (currentPrice - bars[bars.length - 11].c) / bars[bars.length - 11].c;
@@ -1880,8 +1881,8 @@ export async function deployPortfolio(symbol: string, userId?: string): Promise<
     // Enter at the current market price to catch active momentum immediately around the catalyst
     const entryPrice = livePrice;
 
-    // Use our predefined support level and target profit price
-    const supportLevel = proposal.supportLevel || Math.round(livePrice * 0.95 * 100) / 100;
+    // Stop-loss is strictly -5% on any trade
+    const supportLevel = Math.round(entryPrice * 0.95 * 100) / 100;
     const targetPrice = proposal.targetPrice || Math.round(livePrice * 1.15 * 100) / 100;
 
     let users: UserCredentials[] = [];
@@ -2512,7 +2513,7 @@ export async function syncActivePositionWithLiveTrades(userId?: string) {
             currentValue,
             unrealizedPl,
             unrealizedPlPct,
-            supportLevel: setup?.supportLevel || Math.round(entryPrice * 0.95 * 100) / 100,
+            supportLevel: Math.round(entryPrice * 0.95 * 100) / 100,
             targetPrice: setup?.targetPrice || Math.round(entryPrice * 1.15 * 100) / 100,
             catalystDate: setup?.catalystDate || new Date().toISOString().split("T")[0],
             catalystEvent: setup?.catalystEvent || "Live Synced Position",

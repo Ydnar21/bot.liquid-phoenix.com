@@ -12,7 +12,7 @@ import SimulatedTerminal from "./components/SimulatedTerminal";
 import UsernameModal from "./components/UsernameModal";
 import LeaderboardPanel from "./components/LeaderboardPanel";
 import { auth, googleProvider, signInWithPopup, signOut, db, switchToDefaultClientDb } from "./firebase";
-import { onAuthStateChanged, User } from "firebase/auth";
+import { onAuthStateChanged, User, updateProfile } from "firebase/auth";
 import { doc, setDoc, getDoc } from "firebase/firestore";
 
 export default function App() {
@@ -135,9 +135,22 @@ export default function App() {
           }
         }
 
+        // Check if u.displayName is a valid custom username as fallback
+        if (!existingUsername && u.displayName && u.displayName !== "Anonymous" && !u.displayName.includes(" ") && !u.displayName.includes("@")) {
+          existingUsername = u.displayName;
+          console.log(`[CLIENT AUTHSYNC] Username resolved via Firebase profile displayName: ${existingUsername}`);
+        }
+
         setUsername(existingUsername);
         if (!existingUsername) {
           setShowUsernameSetup(true);
+        } else if (u.displayName !== existingUsername) {
+          try {
+            await updateProfile(u, { displayName: existingUsername });
+            console.log("[App] Associated custom username directly with Firebase account identity.");
+          } catch (err: any) {
+            console.warn("[App] Could not associate displayName directly with Firebase account identity:", err.message);
+          }
         }
 
         // Load secure private credentials from Firestore using the user authenticated client context
@@ -928,10 +941,18 @@ export default function App() {
         userId={user?.uid || ""}
         currentUsername={username}
         forcePrompt={!username}
-        onSaveSuccess={(newUsername) => {
+        onSaveSuccess={async (newUsername) => {
           setUsername(newUsername);
           setShowUsernameSetup(false);
           triggerBanner(`User ID synchronized to ${newUsername}`, "success");
+          if (auth.currentUser) {
+            try {
+              await updateProfile(auth.currentUser, { displayName: newUsername });
+              console.log("[App] Saved custom username directly to Firebase Authentication displayName.");
+            } catch (err: any) {
+              console.warn("[App] Could not write displayName to auth profile:", err.message);
+            }
+          }
         }}
         onClose={() => setShowUsernameSetup(false)}
       />

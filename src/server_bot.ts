@@ -1934,6 +1934,7 @@ export async function deployPortfolio(symbol: string, userId?: string): Promise<
             type: "limit",
             limit_price: entryPrice.toString(),
             time_in_force: "gtc",
+            extended_hours: true,
           };
 
           const orderRes = await alpacaUserFetch(creds as any, "/v2/orders", {
@@ -1969,6 +1970,7 @@ export async function deployPortfolio(symbol: string, userId?: string): Promise<
         type: "limit",
         limit_price: entryPrice.toString(),
         time_in_force: "gtc",
+        extended_hours: true,
       };
 
       const orderRes = await alpacaFetch("/v2/orders", {
@@ -2222,6 +2224,15 @@ export async function executeExit(symbol: string, reason: string): Promise<boole
     const users = await getAllUserCredentials();
     let anySuccess = false;
 
+    // Fetch precise real-time sell rate to set limit price for the exit order
+    let filledPrice = activePosition.currentPrice;
+    try {
+      filledPrice = await fetchLatestStockPrice(symbol);
+    } catch (_) {}
+
+    // Place a marketable limit order at 1% below current bids to guarantee fill in both core + extended sessions
+    const exitLimitPrice = Math.round(filledPrice * 0.99 * 100) / 100;
+
     if (users.length > 0) {
       addLog("INFO", `Copy Trading Liquidations: Scanning ${users.length} registered accounts for open positions...`);
       for (const creds of users) {
@@ -2243,14 +2254,16 @@ export async function executeExit(symbol: string, reason: string): Promise<boole
                 symbol,
                 qty: userQty.toString(),
                 side: "sell",
-                type: "market",
+                type: "limit",
+                limit_price: exitLimitPrice.toString(),
                 time_in_force: "gtc",
+                extended_hours: true,
               };
               const sellRes = await alpacaUserFetch(creds as any, "/v2/orders", {
                 method: "POST",
                 body: JSON.stringify(sellPayload),
               });
-              addLog("SUCCESS", `[User ${creds.userId}] Exit order transmitted successfully! Sold ${userQty} shares. Order ID: ${sellRes.id}`);
+              addLog("SUCCESS", `[User ${creds.userId}] Exit limit order transmitted successfully! Sold ${userQty} shares at limit price $${exitLimitPrice.toFixed(2)}. Order ID: ${sellRes.id}`);
               anySuccess = true;
             }
           } else {
@@ -2267,27 +2280,23 @@ export async function executeExit(symbol: string, reason: string): Promise<boole
         symbol,
         qty: trackerQty.toString(),
         side: "sell",
-        type: "market",
+        type: "limit",
+        limit_price: exitLimitPrice.toString(),
         time_in_force: "gtc",
+        extended_hours: true,
       };
       const sellRes = await alpacaFetch("/v2/orders", {
         method: "POST",
         body: JSON.stringify(sellPayload),
       });
-      addLog("SUCCESS", `Default connection exit market order placed successfully! Qty: ${trackerQty}, Order ID: ${sellRes.id}`);
+      addLog("SUCCESS", `Default connection exit limit order placed successfully! Qty: ${trackerQty}, limit price: $${exitLimitPrice.toFixed(2)}, Order ID: ${sellRes.id}`);
       anySuccess = true;
     }
-
-    // Query precise real-time filled sell rate
-    let filledPrice = activePosition.currentPrice;
-    try {
-      filledPrice = await fetchLatestStockPrice(symbol);
-    } catch (_) {}
 
     const pl = trackerQty * filledPrice - activePosition.entryValue;
     const plPct = (pl / activePosition.entryValue) * 100;
 
-    // Add to Completed trading history
+    // Add to Completed trading history (The Realized Gain is registered only after trade is closed)
     closedTrades.unshift({
       id: Math.random().toString(36).substr(2, 9),
       symbol,
@@ -2302,7 +2311,7 @@ export async function executeExit(symbol: string, reason: string): Promise<boole
       exitReason: reason,
     });
 
-    addLog("SUCCESS", `COMMITTED TRANSACTION: Sold ${symbol} at $${filledPrice.toFixed(2)}. Final Pl: ${plPct.toFixed(2)}% ($${pl.toFixed(2)})`);
+    addLog("SUCCESS", `COMMITTED TRANSACTION (REALIZED): Sold ${symbol} at $${filledPrice.toFixed(2)}. Final Pl: ${plPct.toFixed(2)}% ($${pl.toFixed(2)})`);
 
     // Reset position state
     activePosition = null;

@@ -189,7 +189,17 @@ export default function ActivePositionPanel({
       </div>
 
       <div className="mt-6 pl-1 sm:pl-2">
-        {!showExitConfirm ? (
+        {position.status === "EXITING" ? (
+          <div className="p-4 bg-amber-950/20 border border-amber-500/25 rounded-lg space-y-2">
+            <div className="flex items-center gap-2 text-amber-400 font-bold text-xs font-mono uppercase">
+              <Activity className="w-4 h-4 animate-spin" />
+              <span>Pending Order: Sell Limit Order Transmitted</span>
+            </div>
+            <p className="text-[11.5px] text-gray-300 leading-relaxed font-sans">
+              An exit limit order has been submitted to your broker at 1% below the latest bid price to guarantee fill in both core and extended hours sessions. Waiting for Alpaca to verify that the order has been fully filled and executed.
+            </p>
+          </div>
+        ) : !showExitConfirm ? (
           <button
             onClick={() => setShowExitConfirm(true)}
             className="w-full bg-rose-500 hover:bg-rose-600 text-black py-2.5 rounded text-xs font-black uppercase tracking-wider transition-colors cursor-pointer text-center block"

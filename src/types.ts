@@ -69,7 +69,7 @@ export interface ActivePosition {
   catalystDate: string;
   catalystEvent: string;
   earningsDate: string;
-  status: 'NORMAL' | 'REVIEW' | 'WARNING';
+  status: 'NORMAL' | 'REVIEW' | 'WARNING' | 'EXITING';
   reviewReason?: string;
   aiCommentary?: string;
   enteredAt: string;

@@ -2293,30 +2293,17 @@ export async function executeExit(symbol: string, reason: string): Promise<boole
       anySuccess = true;
     }
 
-    const pl = trackerQty * filledPrice - activePosition.entryValue;
-    const plPct = (pl / activePosition.entryValue) * 100;
-
-    // Add to Completed trading history (The Realized Gain is registered only after trade is closed)
-    closedTrades.unshift({
-      id: Math.random().toString(36).substr(2, 9),
-      symbol,
-      companyName: activePosition.companyName,
-      entryPrice: activePosition.entryPrice,
-      exitPrice: filledPrice,
-      qty: trackerQty,
-      pl,
-      plPct,
-      enteredAt: activePosition.enteredAt,
-      exitedAt: new Date().toISOString(),
-      exitReason: reason,
-    });
-
-    addLog("SUCCESS", `COMMITTED TRANSACTION (REALIZED): Sold ${symbol} at $${filledPrice.toFixed(2)}. Final Pl: ${plPct.toFixed(2)}% ($${pl.toFixed(2)})`);
-
-    // Reset position state
-    activePosition = null;
-    saveStateToDisk();
-    return true;
+    if (anySuccess) {
+      // It should NOT be considered a closed trade until the sell order is filled
+      // Instead, we mark it as EXITING, and let the sync engine calculate statistics using Alpaca when it's closed!
+      activePosition.status = "EXITING";
+      activePosition.reviewReason = reason; // preserve the exit reason
+      saveStateToDisk();
+      addLog("SUCCESS", `Exit limit order has been successfully transmitted. Status marked as EXITING. The trade remains active and will NOT be registered as completed/realized until execution is fully filled by the broker.`);
+      return true;
+    } else {
+      throw new Error("Failed to place exit limit order on any linked accounts.");
+    }
 
   } catch (err: any) {
     addLog("ERROR", `Sell Order execution failed: ${err.message}`);
@@ -2589,8 +2576,10 @@ export async function syncActivePositionWithLiveTrades(userId?: string) {
             console.warn("[SYNC ENGINE] Could not reconcile closed order details:", orderErr.message);
           }
 
-          // Fallback reason based on price zone relative to stop-loss support level
-          if (orderReason === "ALPACA_AUTOMATIC_CLOSE") {
+          // Fallback reason based on price zone relative to stop-loss support level or preserved reviewReason
+          if (activePosition.reviewReason) {
+            orderReason = activePosition.reviewReason;
+          } else if (orderReason === "ALPACA_AUTOMATIC_CLOSE") {
             if (exitPrice <= activePosition.supportLevel * 1.01) {
               orderReason = "STOP_LOSS_REACHED";
             } else if (activePosition.catalystDate && new Date().toISOString().split("T")[0] >= activePosition.catalystDate) {

@@ -1699,7 +1699,7 @@ async function checkFOMCBlackout() {
 
 // Main autonomous scanner function
 export async function scanForSetups(userId?: string) {
-  addLog("INFO", "Initiating scan for high-quality setups across S&P 500 & Nasdaq 100 constituents...");
+  addLog("INFO", "Initiating scan for high-quality setups across S&P 500 & Nasdaq 100 constituents...", userId);
   // Proposals stay and remain persistent across accounts until the new scan completes successfully.
   saveStateToDisk();
 
@@ -1708,7 +1708,7 @@ export async function scanForSetups(userId?: string) {
     await updateMarketRegime(userId);
 
     if (botState.marketRegime === "STANDBY") {
-      addLog("WARNING", "Market is in STANDBY regime. Scans are logged but active trading is paused.");
+      addLog("WARNING", "Market is in STANDBY regime. Scans are logged but active trading is paused.", userId);
     }
 
     // SPY bars to calculate sector relative strength
@@ -1727,10 +1727,23 @@ export async function scanForSetups(userId?: string) {
     const targetUid = userId || Object.keys(loadUserRegistryLocal())[0];
     if (targetUid) {
       try {
-        const db = getDb();
+        let db = getDb();
         if (db && typeof db.collection === "function") {
-          const fsSnap = await db.collection("users").doc(targetUid).collection("terminal_v1").doc("filesystem").get();
-          if (fsSnap.exists) {
+          let fsSnap;
+          try {
+            fsSnap = await db.collection("users").doc(targetUid).collection("terminal_v1").doc("filesystem").get();
+          } catch (firstTryErr: any) {
+            if (isFirestoreDatabaseError(firstTryErr)) {
+              console.log("[PYTHON ENGINE] Database connection issue triggered fallback...");
+              switchToDefaultDatabase();
+              db = getDb();
+              fsSnap = await db.collection("users").doc(targetUid).collection("terminal_v1").doc("filesystem").get();
+            } else {
+              throw firstTryErr;
+            }
+          }
+
+          if (fsSnap && fsSnap.exists) {
             const data = fsSnap.data();
             if (data && data.files) {
               const files = data.files as Record<string, { name: string; content: string }>;
@@ -1741,11 +1754,12 @@ export async function scanForSetups(userId?: string) {
                   customPythonFilename = filename;
 
                   // Extract tickers from phoenix_sentry API commands inside python files
-                  const tickerRegex = /(?:ps\.get_rsi|get_rsi|place_order|ps\.place_order)\(\s*["']([A-Z]{1,5})["']/g;
+                  const tickerRegex = /(?:ps\.get_rsi|get_rsi|place_order|ps\.place_order)\(\s*["']([A-Za-z]{1,5})["']/g;
                   let match;
                   while ((match = tickerRegex.exec(content)) !== null) {
-                    if (match[1] && !userPythonTickers.includes(match[1])) {
-                      userPythonTickers.push(match[1]);
+                    const sym = match[1].toUpperCase();
+                    if (sym && !userPythonTickers.includes(sym)) {
+                      userPythonTickers.push(sym);
                     }
                   }
 
@@ -1757,10 +1771,10 @@ export async function scanForSetups(userId?: string) {
                   }
 
                   // Support array variables or lists like symbols = ["AAPL", "AMD"] inside python file
-                  const arraySymbolRegex = /["']([A-Z]{1,5})["']/g;
+                  const arraySymbolRegex = /["']([A-Za-z]{1,5})["']/g;
                   let arrayMatch;
                   while ((arrayMatch = arraySymbolRegex.exec(content)) !== null) {
-                    const symbolAndWord = arrayMatch[1];
+                    const symbolAndWord = arrayMatch[1].toUpperCase();
                     if (!["RSI", "SMA", "EMA", "BUY", "SELL", "HOLD", "TRUE", "FALSE", "NONE", "API", "REST", "PORT", "JSON"].includes(symbolAndWord)) {
                       if (!userPythonTickers.includes(symbolAndWord)) {
                         userPythonTickers.push(symbolAndWord);
@@ -1773,7 +1787,7 @@ export async function scanForSetups(userId?: string) {
           }
         }
       } catch (err: any) {
-        console.error("Failed to load user python files for scanning:", err.message);
+        console.error("[PYTHON ENGINE] Failed to load user python files for scanning:", err.message);
       }
     }
 
@@ -1822,6 +1836,12 @@ export async function scanForSetups(userId?: string) {
 
         // Is this ticker part of custom python script rules?
         const isPythonControlledTicker = userPythonTickers.includes(ticker);
+
+        // Custom RSI filter for Python controlled tickers
+        if (isPythonControlledTicker && currentRSI >= customPivotRsi) {
+          addLog("INFO", `[PYTHON SCAN] Skipped ${ticker}. Custom RSI criteria did not trigger: Current RSI (${Math.round(currentRSI)}) >= custom threshold (${customPivotRsi}).`, userId);
+          continue;
+        }
 
         // Core Filter #1: Above 200 SMA (Python-monitored tickers bypass to execute raw rules)
         if (currentPrice <= sma200 && !isPythonControlledTicker) {
@@ -1934,7 +1954,8 @@ export async function scanForSetups(userId?: string) {
           rsiStatus: currentRSI < 35 ? "OVERSOLD" : currentRSI > 70 ? "OVERBOUGHT" : "NEUTRAL",
           multiTimeframeTrendConfirmed: true,
           weeklyTrendStatus,
-          dailyTrendStructure
+          dailyTrendStructure,
+          isPythonControlled: isPythonControlledTicker
         });
 
       } catch (tickerErr: any) {
@@ -1952,14 +1973,17 @@ export async function scanForSetups(userId?: string) {
       const fourteenDaysLater = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
       const fourteenDaysLaterStr = fourteenDaysLater.toISOString().split("T")[0];
 
-      if (completion.catalystDate && completion.catalystDate >= todayStr && completion.catalystDate <= fourteenDaysLaterStr) {
-        completion.reason = `Catalyst Pullback: Price above 200 SMA with a pullback of more than 5% and upcoming ${completion.catalystEvent} on ${completion.catalystDate}.`;
+      const isPythonControlledTicker = completion.isPythonControlled;
+      if (isPythonControlledTicker || (completion.catalystDate && completion.catalystDate >= todayStr && completion.catalystDate <= fourteenDaysLaterStr)) {
+        if (!isPythonControlledTicker) {
+          completion.reason = `Catalyst Pullback: Price above 200 SMA with a pullback of more than 5% and upcoming ${completion.catalystEvent} on ${completion.catalystDate}.`;
+        }
         evaluatedSetups.push(completion);
       } else {
         // Excluded from standard catalyst radar window
         failedNoCatalystCount++;
         failedNoCatalystList.push(completion.symbol);
-        addLog("INFO", `[SETUP CANDIDATE] Ticker ${completion.symbol} skipped. Detected catalyst date (${completion.catalystDate || "none found"}) lies beyond the desired 2-week active momentum radar window.`);
+        addLog("INFO", `[SETUP CANDIDATE] Ticker ${completion.symbol} skipped. Detected catalyst date (${completion.catalystDate || "none found"}) lies beyond the desired 2-week active momentum radar window.`, userId);
       }
     }
 
@@ -1986,10 +2010,11 @@ export async function scanForSetups(userId?: string) {
       `  • Price drop off Peak > 5%: Passed ${evaluatedCount - failed200SMACount - failedPullbackCount}/${evaluatedCount - failed200SMACount} (Failed: ${failedPullbackList.length > 0 ? failedPullbackList.join(", ") : "None"})\n` +
       `  • Multi-Timeframe Trend Confirmation (Weekly & Daily aligned): Passed ${evaluatedCount - failed200SMACount - failedPullbackCount - failedMTFTrendCount}/${evaluatedCount - failed200SMACount - failedPullbackCount} (Failed/Unconfirmed: ${failedMTFTrendList.length > 0 ? failedMTFTrendList.join(", ") : "None"})\n` +
       `  • Catalyst scheduled within 14 days: Passed ${evaluatedSetups.length}/${proposedSetups.length} (Failed/No immediate catalyst: ${failedNoCatalystList.length > 0 ? failedNoCatalystList.join(", ") : "None"})\n` +
-      `  • Qualified Setups: ${evaluatedSetups.length} active candidate(s)`
+      `  • Qualified Setups: ${evaluatedSetups.length} active candidate(s)`,
+      userId
     );
 
-    addLog("SUCCESS", `Screener scan completed! Found ${scannedSetups.length} setup proposals.`);
+    addLog("SUCCESS", `Screener scan completed! Found ${scannedSetups.length} setup proposals.`, userId);
     botState.lastScanTime = new Date().toISOString();
     botState.nextScanTime = new Date(Date.now() + botConfig.scanIntervalMinutes * 60 * 1000).toISOString();
     saveStateToDisk();

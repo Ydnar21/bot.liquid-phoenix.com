@@ -1,0 +1,151 @@
+{
+  "botConfig": {
+    "ALPACA_API_KEY": "PKZWFOARTISXJYRV6A3WODI3IM",
+    "ALPACA_SECRET_KEY": "5a4c8gccmbYC1ioHzAsTTEMjpyYWN9YYnfwkv3gCLMzB",
+    "ALPACA_BASE_URL": "https://paper-api.alpaca.markets",
+    "GEMINI_API_KEY": "",
+    "NEWSAPI_KEY": "",
+    "isPaper": true,
+    "isBotRunning": false,
+    "isConnectionActive": false,
+    "scanIntervalMinutes": 5,
+    "CLAUDE_API_KEY": "",
+    "OPENAI_API_KEY": ""
+  },
+  "activePosition": null,
+  "closedTrades": [],
+  "botState": {
+    "isActive": false,
+    "lastScanTime": null,
+    "nextScanTime": null,
+    "marketRegime": "NORMAL",
+    "spySma50": 0,
+    "spySma200": 0,
+    "spyPrice": 0,
+    "fomcBlackout": false,
+    "isMarketOpen": true,
+    "storedEvents": []
+  },
+  "botLogs": [
+    {
+      "timestamp": "2026-06-03T14:43:35.905Z",
+      "level": "SUCCESS",
+      "message": "[CONNECTION ENGINE] Stored credentials for user JWgdPDAVeMe5sigg1k62P3495rv1 found and synced to memory cache in ALPACA mode."
+    },
+    {
+      "timestamp": "2026-06-03T14:43:25.889Z",
+      "level": "SUCCESS",
+      "message": "[CONNECTION ENGINE] Stored credentials for user JWgdPDAVeMe5sigg1k62P3495rv1 found and synced to memory cache in ALPACA mode."
+    },
+    {
+      "timestamp": "2026-06-03T14:43:15.880Z",
+      "level": "SUCCESS",
+      "message": "[CONNECTION ENGINE] Stored credentials for user JWgdPDAVeMe5sigg1k62P3495rv1 found and synced to memory cache in ALPACA mode."
+    },
+    {
+      "timestamp": "2026-06-03T14:43:05.870Z",
+      "level": "SUCCESS",
+      "message": "[CONNECTION ENGINE] Stored credentials for user JWgdPDAVeMe5sigg1k62P3495rv1 found and synced to memory cache in ALPACA mode."
+    },
+    {
+      "timestamp": "2026-06-03T14:42:55.867Z",
+      "level": "SUCCESS",
+      "message": "[CONNECTION ENGINE] Stored credentials for user JWgdPDAVeMe5sigg1k62P3495rv1 found and synced to memory cache in ALPACA mode."
+    },
+    {
+      "timestamp": "2026-06-03T14:42:45.885Z",
+      "level": "SUCCESS",
+      "message": "[CONNECTION ENGINE] Stored credentials for user JWgdPDAVeMe5sigg1k62P3495rv1 found and synced to memory cache in ALPACA mode."
+    },
+    {
+      "timestamp": "2026-06-03T14:42:45.883Z",
+      "level": "SUCCESS",
+      "message": "[CONNECTION ENGINE] Stored credentials for user JWgdPDAVeMe5sigg1k62P3495rv1 found and synced to memory cache in ALPACA mode."
+    },
+    {
+      "timestamp": "2026-06-03T14:42:25.906Z",
+      "level": "SUCCESS",
+      "message": "[CONNECTION ENGINE] Stored credentials for user JWgdPDAVeMe5sigg1k62P3495rv1 found and synced to memory cache in ALPACA mode."
+    },
+    {
+      "timestamp": "2026-06-03T14:42:15.909Z",
+      "level": "SUCCESS",
+      "message": "[CONNECTION ENGINE] Stored credentials for user JWgdPDAVeMe5sigg1k62P3495rv1 found and synced to memory cache in ALPACA mode."
+    },
+    {
+      "timestamp": "2026-06-03T14:42:05.864Z",
+      "level": "SUCCESS",
+      "message": "[CONNECTION ENGINE] Stored credentials for user JWgdPDAVeMe5sigg1k62P3495rv1 found and synced to memory cache in ALPACA mode."
+    },
+    {
+      "timestamp": "2026-06-03T14:41:56.267Z",
+      "level": "SUCCESS",
+      "message": "[CONNECTION ENGINE] Stored credentials for user JWgdPDAVeMe5sigg1k62P3495rv1 found and synced to memory cache in ALPACA mode."
+    },
+    {
+      "timestamp": "2026-06-03T14:41:46.238Z",
+      "level": "SUCCESS",
+      "message": "[CONNECTION ENGINE] Stored credentials for user JWgdPDAVeMe5sigg1k62P3495rv1 found and synced to memory cache in ALPACA mode."
+    },
+    {
+      "timestamp": "2026-06-03T14:41:36.266Z",
+      "level": "SUCCESS",
+      "message": "[CONNECTION ENGINE] Stored credentials for user JWgdPDAVeMe5sigg1k62P3495rv1 found and synced to memory cache in ALPACA mode."
+    },
+    {
+      "timestamp": "2026-06-03T14:41:25.864Z",
+      "level": "SUCCESS",
+      "message": "[CONNECTION ENGINE] Stored credentials for user JWgdPDAVeMe5sigg1k62P3495rv1 found and synced to memory cache in ALPACA mode."
+    },
+    {
+      "timestamp": "2026-06-03T14:41:15.868Z",
+      "level": "SUCCESS",
+      "message": "[CONNECTION ENGINE] Stored credentials for user JWgdPDAVeMe5sigg1k62P3495rv1 found and synced to memory cache in ALPACA mode."
+    },
+    {
+      "timestamp": "2026-06-03T14:41:06.157Z",
+      "level": "SUCCESS",
+      "message": "[CONNECTION ENGINE] Stored credentials for user JWgdPDAVeMe5sigg1k62P3495rv1 found and synced to memory cache in ALPACA mode."
+    },
+    {
+      "timestamp": "2026-06-03T14:40:55.882Z",
+      "level": "SUCCESS",
+      "message": "[CONNECTION ENGINE] Stored credentials for user JWgdPDAVeMe5sigg1k62P3495rv1 found and synced to memory cache in ALPACA mode."
+    },
+    {
+      "timestamp": "2026-06-03T14:40:45.883Z",
+      "level": "SUCCESS",
+      "message": "[CONNECTION ENGINE] Stored credentials for user JWgdPDAVeMe5sigg1k62P3495rv1 found and synced to memory cache in ALPACA mode."
+    },
+    {
+      "timestamp": "2026-06-03T14:40:35.882Z",
+      "level": "SUCCESS",
+      "message": "[CONNECTION ENGINE] Stored credentials for user JWgdPDAVeMe5sigg1k62P3495rv1 found and synced to memory cache in ALPACA mode."
+    },
+    {
+      "timestamp": "2026-06-03T14:40:25.860Z",
+      "level": "SUCCESS",
+      "message": "[CONNECTION ENGINE] Stored credentials for user JWgdPDAVeMe5sigg1k62P3495rv1 found and synced to memory cache in ALPACA mode."
+    },
+    {
+      "timestamp": "2026-06-03T14:40:15.890Z",
+      "level": "SUCCESS",
+      "message": "[CONNECTION ENGINE] Stored credentials for user JWgdPDAVeMe5sigg1k62P3495rv1 found and synced to memory cache in ALPACA mode."
+    },
+    {
+      "timestamp": "2026-06-03T14:40:05.867Z",
+      "level": "SUCCESS",
+      "message": "[CONNECTION ENGINE] Stored credentials for user JWgdPDAVeMe5sigg1k62P3495rv1 found and synced to memory cache in ALPACA mode."
+    },
+    {
+      "timestamp": "2026-06-03T14:39:55.871Z",
+      "level": "SUCCESS",
+      "message": "[CONNECTION ENGINE] Stored credentials for user JWgdPDAVeMe5sigg1k62P3495rv1 found and synced to memory cache in ALPACA mode."
+    },
+    {
+      "timestamp": "2026-06-03T14:39:55.856Z",
+      "level": "SUCCESS",
+      "message": "[CONNECTION ENGINE] Stored credentials for user JWgdPDAVeMe5sigg1k62P3495rv1 found and synced to memory cache in ALPACA mode."
+    }
+  ]
+}

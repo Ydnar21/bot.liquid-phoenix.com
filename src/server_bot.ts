@@ -9,6 +9,36 @@ const getDb = () => getAdminDb();
 // Database File Persistence Path
 const DATA_FILE = path.resolve("./trading_state.json");
 
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: "server-bot",
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+}
+
 // Check if a Firestore error is related to a missing custom database or permission denied to trigger fallback to default database
 function isFirestoreDatabaseError(err: any): boolean {
   if (!err || !err.message) return false;
@@ -343,6 +373,7 @@ export function startFirestoreStateListener() {
           }
         }
       }, (err) => {
+        handleFirestoreError(err, OperationType.LIST, "globalState/trading");
         console.warn("Firestore backup state snapshot listener error:", err.message);
         if (err.message.includes("PERMISSION_DENIED") || err.message.includes("permission_denied") || err.message.includes("Error 7") || err.message.includes("insufficient permissions")) {
           console.warn("[Firebase Server] Insufficient IAM permissions on snapshot listener. Unsubscribing to prevent warning logs; executing stable cached state loops with robust auto-fallbacks.");

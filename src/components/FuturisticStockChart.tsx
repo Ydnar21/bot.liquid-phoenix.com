@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Play, Pause, RotateCcw, TrendingUp, Zap, HelpCircle, Eye, EyeOff, Activity, ArrowUpRight, ArrowDownRight, Sparkles } from "lucide-react";
+import { TrendingUp, Zap, HelpCircle, Eye, EyeOff, Activity, ArrowUpRight, ArrowDownRight, Sparkles } from "lucide-react";
 
 interface DataPoint {
   x: number;
@@ -15,36 +15,30 @@ export default function FuturisticStockChart() {
   const [showAnomalies, setShowAnomalies] = useState<boolean>(true);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const [progress, setProgress] = useState<number>(0.8); // Holds simulated draw progress
-  const [livePrice, setLivePrice] = useState<number>(418.52);
+  const [livePrice, setLivePrice] = useState<number>(1000.00);
   const [liveChange, setLiveChange] = useState<number>(12.45);
   const [activeTab, setActiveTab] = useState<"1D" | "1W" | "1M">("1M");
 
   // Highly-crafted clean line points: ascending with volatile, spiky highs and sharp dips
   const dataPoints: DataPoint[] = [
-    { x: 0, y: 180, price: 100.00, time: "09:30 AM", label: "Market Open Breakout" },
-    { x: 30, y: 130, price: 135.00, time: "09:45 AM" },
-    { x: 60, y: 155, price: 115.00, time: "10:00 AM", isDip: true, label: "Immediate Scalper Flush" },
-    { x: 90, y: 110, price: 150.00, time: "10:15 AM" },
-    { x: 120, y: 135, price: 130.00, time: "10:30 AM" },
-    { x: 150, y: 175, price: 102.00, time: "11:00 AM", label: "Weekly 30 SMA Support Pool", isDip: true }, // Sharp Dip 1
-    { x: 180, y: 90, price: 170.00, time: "11:15 AM" },
-    { x: 210, y: 115, price: 152.00, time: "11:30 AM" },
-    { x: 240, y: 70, price: 195.00, time: "11:45 AM" },
-    { x: 270, y: 145, price: 138.00, time: "12:15 PM", label: "Liquidity Fair Value Gap Fill", isDip: true }, // Sharp Dip 2
-    { x: 300, y: 100, price: 178.00, time: "12:30 PM" },
-    { x: 330, y: 50, price: 225.00, time: "12:45 PM" },
-    { x: 360, y: 80, price: 198.00, time: "01:00 PM" },
-    { x: 390, y: 30, price: 255.00, time: "01:30 PM", label: "Apex Volume Spike" },
-    { x: 420, y: 115, price: 165.00, time: "01:45 PM", label: "20 EMA Institutional Support", isDip: true }, // Sharp Dip 3
-    { x: 450, y: 65, price: 215.00, time: "02:00 PM" },
-    { x: 480, y: 95, price: 185.00, time: "02:15 PM" },
-    { x: 510, y: 40, price: 258.00, time: "02:30 PM" },
-    { x: 540, y: 15, price: 325.00, time: "03:00 PM" },
-    { x: 570, y: 105, price: 180.00, time: "03:15 PM", label: "Pre-Close Stop Hunt Sweep", isDip: true }, // Sharp Dip 4
-    { x: 600, y: 55, price: 295.00, time: "03:30 PM" },
-    { x: 630, y: 25, price: 360.00, time: "03:45 PM" },
-    { x: 670, y: 50, price: 330.00, time: "03:50 PM" },
-    { x: 700, y: 8, price: 418.52, time: "04:00 PM", label: "Market Close Summit Breakout" },
+    { x: 0, y: 200, price: 1000, time: "09:30 AM", label: "Market Start" },
+    { x: 45, y: 185, price: 2500, time: "09:42 AM" },
+    { x: 80, y: 195, price: 1500, time: "09:55 AM", isDip: true },
+    { x: 110, y: 160, price: 7000, time: "10:10 AM" },
+    { x: 140, y: 175, price: 4500, time: "10:25 AM", isDip: true },
+    { x: 190, y: 150, price: 11000, time: "10:50 AM" },
+    { x: 230, y: 140, price: 13000, time: "11:10 AM" },
+    { x: 260, y: 165, price: 8000, time: "11:25 AM", isDip: true },
+    { x: 310, y: 130, price: 19000, time: "11:50 AM" },
+    { x: 350, y: 120, price: 22000, time: "12:10 PM" },
+    { x: 390, y: 145, price: 15000, time: "12:30 PM", isDip: true },
+    { x: 440, y: 100, price: 30000, time: "01:00 PM" },
+    { x: 480, y: 90, price: 34000, time: "01:20 PM" },
+    { x: 520, y: 115, price: 25000, time: "01:40 PM", isDip: true },
+    { x: 570, y: 70, price: 42000, time: "02:10 PM" },
+    { x: 610, y: 60, price: 46000, time: "02:30 PM" },
+    { x: 650, y: 80, price: 38000, time: "02:50 PM", isDip: true },
+    { x: 700, y: 20, price: 60000, time: "03:15 PM", label: "Market Summit" }
   ];
 
   // Highly accelerated live fluctuating noise effect for a frantic, spiky futuristic stock asset vibe
@@ -53,9 +47,9 @@ export default function FuturisticStockChart() {
     const interval = setInterval(() => {
       setLivePrice((prev) => {
         // High frequency volatile jumps
-        const variance = (Math.random() - 0.47) * 2.5; 
+        const variance = (Math.random() - 0.45) * 50.0; 
         const nextPrice = prev + variance;
-        const changePct = ((nextPrice - 100.0) / 100.0) * 100;
+        const changePct = ((nextPrice - 1000.0) / 1000.0) * 100;
         setLiveChange(Math.round(changePct * 100) / 100);
         return Math.round(nextPrice * 100) / 100;
       });
@@ -63,9 +57,9 @@ export default function FuturisticStockChart() {
       // Quick-draw progress indicator loop
       setProgress((prev) => {
         if (prev >= 1) return 0.05; // restart preview cycle loop
-        return prev + 0.015; // Increased step size for rapid populating
+        return prev + 0.01; // Slower speed
       });
-    }, 60); // Speed up tick response to 60ms for vibrant continuous update
+    }, 300); // Speed up tick response to 60ms for vibrant continuous update
 
     return () => clearInterval(interval);
   }, [isPlaying]);
@@ -305,24 +299,6 @@ export default function FuturisticStockChart() {
       {/* Realistic Simulator Player / Parameter Panel Controls */}
       <div className="flex justify-between items-center bg-theme-input p-3.5 rounded-lg border border-theme-border/60">
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => setIsPlaying(!isPlaying)}
-            className="w-8 h-8 rounded-full bg-white text-black hover:bg-gray-100 flex items-center justify-center transition-colors shadow focus:outline-none cursor-pointer"
-            title={isPlaying ? "Pause Video Stream" : "Play Video Stream"}
-          >
-            {isPlaying ? <Pause className="w-4 h-4 fill-black" /> : <Play className="w-4 h-4 fill-black ml-0.5" />}
-          </button>
-
-          <button
-            onClick={() => setProgress(0.05)}
-            className="w-8 h-8 rounded-full border border-theme-border text-gray-400 hover:text-white flex items-center justify-center transition-colors shadow focus:outline-none cursor-pointer"
-            title="Replay Video Stream from Origin Node"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-          </button>
-
-          <div className="h-4 w-[1px] bg-theme-border" />
-
           <button
             onClick={() => setShowAnomalies(!showAnomalies)}
             className={`text-[10px] font-mono font-bold px-3 py-1 rounded transition-colors flex items-center gap-1.5 uppercase ${

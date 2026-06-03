@@ -1164,6 +1164,11 @@ export async function getUserAccount(userId: string): Promise<any> {
         buyingPower = equity * 2.5;
       }
 
+      // Authoritatively ensure cash represents only the cash remaining/available not tied up in active trades
+      if (session.activePosition) {
+        cash = Math.max(0, equity - longMarketValue);
+      }
+
       // If we previously had a logged connection error, announce recovery
       if (lastLoggedConnectionErrorMap[userId]) {
         addLog("SUCCESS", `[CONNECTION ENGINE] Robinhood Agentic MCP Connection successfully restored for account ${userId}.`);
@@ -1198,15 +1203,28 @@ export async function getUserAccount(userId: string): Promise<any> {
       delete lastLoggedConnectionErrorMap[userId];
     }
 
+    let equity = parseFloat(account.equity);
+    let portfolioValue = parseFloat(account.portfolio_value);
+    let longMarketValue = parseFloat(account.long_market_value || "0");
+    let cash = parseFloat(account.cash);
+
+    if (session.activePosition) {
+      if (longMarketValue === 0) {
+        longMarketValue = session.activePosition.currentValue;
+      }
+      // Available cash excludes the trades/positions in progress
+      cash = Math.max(0, equity - longMarketValue);
+    }
+
     return {
       status: "connected",
       broker: "ALPACA",
       account_number: account.account_number,
       currency: account.currency,
-      cash: parseFloat(account.cash),
-      portfolio_value: parseFloat(account.portfolio_value),
-      equity: parseFloat(account.equity),
-      long_market_value: parseFloat(account.long_market_value),
+      cash: cash,
+      portfolio_value: portfolioValue,
+      equity: equity,
+      long_market_value: longMarketValue,
       buying_power: parseFloat(account.buying_power),
       trading_blocked: account.trading_blocked,
       isPaper: creds.ALPACA_BASE_URL?.includes("paper") || false,
@@ -1700,6 +1718,71 @@ export async function scanForSetups(userId?: string) {
       spyReturn10 = (spyBars[spyBars.length - 1].c - spyBars[spyBars.length - 11].c) / spyBars[spyBars.length - 11].c;
     }
 
+    // Load custom python strategy configs & target symbols directly from Firestore database
+    let userPythonTickers: string[] = [];
+    let customPivotRsi = 35; // default
+    let hasCustomPython = false;
+    let customPythonFilename = "";
+
+    const targetUid = userId || Object.keys(loadUserRegistryLocal())[0];
+    if (targetUid) {
+      try {
+        const db = getDb();
+        if (db && typeof db.collection === "function") {
+          const fsSnap = await db.collection("users").doc(targetUid).collection("terminal_v1").doc("filesystem").get();
+          if (fsSnap.exists) {
+            const data = fsSnap.data();
+            if (data && data.files) {
+              const files = data.files as Record<string, { name: string; content: string }>;
+              for (const [filename, fileObj] of Object.entries(files)) {
+                if (filename.endsWith(".py") && fileObj.content) {
+                  const content = fileObj.content;
+                  hasCustomPython = true;
+                  customPythonFilename = filename;
+
+                  // Extract tickers from phoenix_sentry API commands inside python files
+                  const tickerRegex = /(?:ps\.get_rsi|get_rsi|place_order|ps\.place_order)\(\s*["']([A-Z]{1,5})["']/g;
+                  let match;
+                  while ((match = tickerRegex.exec(content)) !== null) {
+                    if (match[1] && !userPythonTickers.includes(match[1])) {
+                      userPythonTickers.push(match[1]);
+                    }
+                  }
+
+                  // Find custom threshold comparison rsi < 35 or rsi <= 35
+                  const rsiRegex = /rsi\s*(?:<|<=)\s*(\d+)/i;
+                  const rsiMatch = content.match(rsiRegex);
+                  if (rsiMatch && rsiMatch[1]) {
+                    customPivotRsi = parseInt(rsiMatch[1], 10);
+                  }
+
+                  // Support array variables or lists like symbols = ["AAPL", "AMD"] inside python file
+                  const arraySymbolRegex = /["']([A-Z]{1,5})["']/g;
+                  let arrayMatch;
+                  while ((arrayMatch = arraySymbolRegex.exec(content)) !== null) {
+                    const symbolAndWord = arrayMatch[1];
+                    if (!["RSI", "SMA", "EMA", "BUY", "SELL", "HOLD", "TRUE", "FALSE", "NONE", "API", "REST", "PORT", "JSON"].includes(symbolAndWord)) {
+                      if (!userPythonTickers.includes(symbolAndWord)) {
+                        userPythonTickers.push(symbolAndWord);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } catch (err: any) {
+        console.error("Failed to load user python files for scanning:", err.message);
+      }
+    }
+
+    if (hasCustomPython && userPythonTickers.length > 0) {
+      addLog("INFO", `[PYTHON ENGINE] Loaded custom strategy rules and parameters from "${customPythonFilename}" in Firestore. Active Python-monitored tickers: ${userPythonTickers.join(", ")}. RSI target threshold: ${customPivotRsi}.`, userId);
+    }
+
+    // Merge standard sector leaders with python target constituents to form the active scanning universe
+    const scanUniverse = Array.from(new Set([...userPythonTickers, ...SECTOR_LEADERS]));
     const proposedSetups: StockSetup[] = [];
 
     // Detailed counters for scan verbosity of the Trend Pullback strategy
@@ -1713,8 +1796,8 @@ export async function scanForSetups(userId?: string) {
     let failedNoCatalystCount = 0;
     const failedNoCatalystList: string[] = [];
 
-    // Loop through sector leaders list
-    for (const ticker of SECTOR_LEADERS) {
+    // Loop through scanner universe
+    for (const ticker of scanUniverse) {
       try {
         const bars = await fetchAlpacaBars(ticker, 365, userId);
         if (!bars || bars.length < 200) continue;
@@ -1737,8 +1820,11 @@ export async function scanForSetups(userId?: string) {
         }
         const currentRSI = rsiHistory[rsiHistory.length - 1];
 
-        // Core Filter #1: Above 200 SMA
-        if (currentPrice <= sma200) {
+        // Is this ticker part of custom python script rules?
+        const isPythonControlledTicker = userPythonTickers.includes(ticker);
+
+        // Core Filter #1: Above 200 SMA (Python-monitored tickers bypass to execute raw rules)
+        if (currentPrice <= sma200 && !isPythonControlledTicker) {
           failed200SMACount++;
           failed200SMAList.push(ticker);
           continue;
@@ -1748,7 +1834,7 @@ export async function scanForSetups(userId?: string) {
         const highPrices = bars.map(b => b.h);
         const peakPrice = Math.max(...highPrices);
         const offPeakPct = ((peakPrice - currentPrice) / peakPrice) * 100;
-        if (offPeakPct <= 5) {
+        if (offPeakPct <= 5 && !isPythonControlledTicker) {
           failedPullbackCount++;
           failedPullbackList.push(`${ticker}(${offPeakPct.toFixed(1)}%)`);
           continue;
@@ -1779,7 +1865,7 @@ export async function scanForSetups(userId?: string) {
         }
 
         const multiTimeframeTrendConfirmed = (weeklyTrendStatus === "BULLISH") && (dailyTrendStructure !== "WEAK");
-        if (!multiTimeframeTrendConfirmed) {
+        if (!multiTimeframeTrendConfirmed && !isPythonControlledTicker) {
           failedMTFTrendCount++;
           failedMTFTrendList.push(`${ticker}(W:${weeklyTrendStatus}, D:${dailyTrendStructure})`);
           continue;
@@ -1795,7 +1881,6 @@ export async function scanForSetups(userId?: string) {
         const fun = getFundamentalMetrics(ticker);
 
         // Calculate the optimal entry price linked with the supply zone peak resistance.
-        // We target an entry at an 8% discount from the supply zone resistance to ensure a high-probability pullback margin.
         const entryPrice = Math.round(Math.min(currentPrice, sdZones.supplyZone * 0.92) * 100) / 100;
 
         // Stop-loss is strictly -5% on any trade
@@ -1821,7 +1906,9 @@ export async function scanForSetups(userId?: string) {
           debtToEquity: fun.debtToEquity,
           fcfPositive: fun.fcfPositive,
           marketCapBillion: fun.marketCapBillion,
-          reason: `Trend Pullback: Price above 200 SMA with ${offPeakPct.toFixed(1)}% price drop off Peak.`,
+          reason: isPythonControlledTicker 
+            ? `Python Strategy Rule matched: Satisfies "${customPythonFilename}" ruleset criteria (RSI target: < ${customPivotRsi}).`
+            : `Trend Pullback: Price above 200 SMA with ${offPeakPct.toFixed(1)}% price drop off Peak.`,
           volumeTrendRatio: Math.round(volumeTrendRatio * 100) / 100,
           entryVolumeRatio: Math.round(entryVolumeRatio * 100) / 100,
           supportLevel: Math.round(supportLevel * 100) / 100,
@@ -3351,104 +3438,143 @@ export async function getLeaderboardRankings(currentUserId?: string): Promise<{
   robinhood_live: any[];
 }> {
   const localRegistry = loadUserRegistryLocal();
-  
-  // Resolve current user's profile and registered username
-  let username = "You (unregistered)";
-  if (currentUserId && localRegistry[currentUserId]) {
-    username = localRegistry[currentUserId].username;
+
+  // Try to load any actual chosen usernames dynamically from Cloud Firestore first
+  try {
+    const db = getDb();
+    if (db && typeof db.collection === "function") {
+      const usersSnap = await db.collection("users").get();
+      usersSnap.forEach((doc) => {
+        const uId = doc.id;
+        const uData = doc.data();
+        if (uData && uData.username) {
+          localRegistry[uId] = {
+            username: uData.username,
+            username_lowercase: uData.username_lowercase || uData.username.toLowerCase(),
+            lastUsernameChange: uData.lastUsernameChange || "",
+          };
+        }
+      });
+      saveUserRegistryLocal(localRegistry);
+    }
+  } catch (err: any) {
+    console.warn("[USER ENGINE] Firestore query for all users bypassed or failed: ", err.message);
   }
 
-  // Resolve active broker type and paper status
-  const userSession = getUserSession(currentUserId);
-  let userBrokerType = "ALPACA";
-  let isPaper = userSession.botConfig.isPaper;
-  if (currentUserId) {
+  const registeredUserIds = Object.keys(localRegistry);
+
+  // 1. Ensure all registered users have their latest state loaded into memory
+  await Promise.all(
+    registeredUserIds.map(async (rUserId) => {
+      try {
+        await loadUserStateFromDbOrDisk(rUserId);
+      } catch (err) {
+        // ignore
+      }
+    })
+  );
+
+  // If currentUserId is passed and not in registry, load theirs too so we can display them
+  if (currentUserId && !localRegistry[currentUserId]) {
+    try {
+      await loadUserStateFromDbOrDisk(currentUserId);
+    } catch (err) {
+      // ignore
+    }
+  }
+
+  const paperEntries: any[] = [];
+  const liveEntries: any[] = [];
+  const rhEntries: any[] = [];
+
+  // 2. Extract details for every registered user
+  for (const rUserId of registeredUserIds) {
+    const uUsername = localRegistry[rUserId]?.username || "Real Trader";
+    const session = getUserSession(rUserId);
+    
+    const trades = session.closedTrades || [];
+    const totalPl = trades.reduce((acc, t) => acc + (t.pl || 0), 0);
+    const profitPct = trades.length > 0 
+      ? Math.round((totalPl / 100000 * 100) * 100) / 100 
+      : 0.0;
+    const moneyMade = Math.round(totalPl * 100) / 100;
+    
+    let daysActive = 1;
+    if (trades.length > 0) {
+      const uniqueDays = new Set(trades.map(t => t.enteredAt ? t.enteredAt.substring(0, 10) : "")).size;
+      daysActive = Math.max(1, uniqueDays);
+    }
+
+    let userBrokerType = "ALPACA";
+    let isPaper = session.botConfig.isPaper;
+    try {
+      const creds = await resolveCredentialsForUser(rUserId);
+      if (creds) {
+        userBrokerType = creds.brokerType || "ALPACA";
+      }
+    } catch (e) {
+      console.warn("Failed to check brokerType in getLeaderboardRankings:", e);
+    }
+
+    const isCurrentUser = currentUserId === rUserId;
+
+    const entry = {
+      userId: rUserId,
+      username: uUsername,
+      profitPct,
+      moneyMade,
+      daysActive,
+      isCurrentUser,
+      isRegistered: true,
+    };
+
+    if (userBrokerType === "ALPACA" && isPaper) {
+      paperEntries.push(entry);
+    } else if (userBrokerType === "ALPACA" && !isPaper) {
+      liveEntries.push(entry);
+    } else if (userBrokerType === "ROBINHOOD") {
+      rhEntries.push(entry);
+    }
+  }
+
+  // 3. If current user isn't registered, append them to the appropriate list as "You (unregistered)"
+  if (currentUserId && !localRegistry[currentUserId]) {
+    const session = getUserSession(currentUserId);
+    const trades = session.closedTrades || [];
+    const totalPl = trades.reduce((acc, t) => acc + (t.pl || 0), 0);
+    const profitPct = trades.length > 0 
+      ? Math.round((totalPl / 100000 * 100) * 100) / 100 
+      : 0.0;
+    const moneyMade = Math.round(totalPl * 100) / 100;
+
+    let userBrokerType = "ALPACA";
+    let isPaper = session.botConfig.isPaper;
     try {
       const creds = await resolveCredentialsForUser(currentUserId);
       if (creds) {
         userBrokerType = creds.brokerType || "ALPACA";
       }
     } catch (e) {
-      console.warn("Failed to check brokerType within getLeaderboardRankings:", e);
+      // ignore
     }
-  }
 
-  // Calculate real performance metrics from system completed user closedTrades
-  const userClosedTrades = userSession.closedTrades || [];
-  const totalPl = userClosedTrades.reduce((acc, t) => acc + (t.pl || 0), 0);
-  const realProfitPct = userClosedTrades.length > 0 
-    ? Math.round((totalPl / 100000 * 100) * 100) / 100 
-    : 0.0;
-  const realMoneyMade = Math.round(totalPl * 100) / 100;
-
-  // Establish user entries for each board based on connection status
-  const userPaperPl = (userBrokerType === "ALPACA" && isPaper) ? realProfitPct : 0.00;
-  const userPaperMoney = (userBrokerType === "ALPACA" && isPaper) ? realMoneyMade : 0.00;
-
-  const userAlpacaLivePl = (userBrokerType === "ALPACA" && !isPaper) ? realProfitPct : 0.00;
-  const userAlpacaLiveMoney = (userBrokerType === "ALPACA" && !isPaper) ? realMoneyMade : 0.00;
-
-  const userRhLivePl = (userBrokerType === "ROBINHOOD") ? realProfitPct : 0.00;
-  const userRhLiveMoney = (userBrokerType === "ROBINHOOD") ? realMoneyMade : 0.00;
-
-  // Default Professional Bots for Alpaca Paper
-  const alpacaPaperBots = [
-    { userId: "bot_p1", username: "ZenITH_Trdr_Paper", profitPct: 34.50, moneyMade: 34500.00, daysActive: 45, isCommunity: true },
-    { userId: "bot_p2", username: "PaperSentry_Bot", profitPct: 21.80, moneyMade: 21800.00, daysActive: 30, isCommunity: true },
-    { userId: "bot_p3", username: "AlphaPaper_Oracle", profitPct: 15.90, moneyMade: 15900.00, daysActive: 18, isCommunity: true },
-    { userId: "bot_p4", username: "SandboxSurfer", profitPct: 8.40, moneyMade: 8400.00, daysActive: 12, isCommunity: true },
-    { userId: "bot_p5", username: "BetaTester_99", profitPct: 3.10, moneyMade: 3100.00, daysActive: 5, isCommunity: true },
-  ];
-
-  // Default Professional Bots for Alpaca Live
-  const alpacaLiveBots = [
-    { userId: "bot_l1", username: "ApexForce_Live", profitPct: 42.10, moneyMade: 42100.00, daysActive: 89, isCommunity: true },
-    { userId: "bot_l2", username: "QuantumScalper", profitPct: 28.60, moneyMade: 28600.00, daysActive: 62, isCommunity: true },
-    { userId: "bot_l3", username: "AlpacaArch_Sentry", profitPct: 19.45, moneyMade: 19450.00, daysActive: 41, isCommunity: true },
-    { userId: "bot_l4", username: "SentryPrime_Live", profitPct: 12.30, moneyMade: 12300.00, daysActive: 23, isCommunity: true },
-    { userId: "bot_l5", username: "RealTime_Edge", profitPct: 5.15, moneyMade: 5150.00, daysActive: 14, isCommunity: true },
-  ];
-
-  // Default Professional Bots for Robinhood Live
-  const robinhoodLiveBots = [
-    { userId: "bot_rh1", username: "Sherwood_AI", profitPct: 48.20, moneyMade: 48200.00, daysActive: 120, isCommunity: true },
-    { userId: "bot_rh2", username: "RobinHoodlum", profitPct: 32.40, moneyMade: 32400.00, daysActive: 75, isCommunity: true },
-    { userId: "bot_rh3", username: "Nottingham_Sentry", profitPct: 22.10, moneyMade: 22100.00, daysActive: 50, isCommunity: true },
-    { userId: "bot_rh4", username: "MerryTrading_Bot", profitPct: 14.85, moneyMade: 14850.00, daysActive: 29, isCommunity: true },
-    { userId: "bot_rh5", username: "LittleJohn_Scalp", profitPct: 6.90, moneyMade: 6900.00, daysActive: 11, isCommunity: true },
-  ];
-
-  const paperEntries: any[] = [...alpacaPaperBots];
-  const liveEntries: any[] = [...alpacaLiveBots];
-  const rhEntries: any[] = [...robinhoodLiveBots];
-
-  if (currentUserId) {
-    paperEntries.push({
+    const unregisteredEntry = {
       userId: currentUserId,
-      username,
-      profitPct: userPaperPl,
-      moneyMade: userPaperMoney,
+      username: "You (unregistered)",
+      profitPct,
+      moneyMade,
       daysActive: 1,
       isCurrentUser: true,
-    });
+      isRegistered: false,
+    };
 
-    liveEntries.push({
-      userId: currentUserId,
-      username,
-      profitPct: userAlpacaLivePl,
-      moneyMade: userAlpacaLiveMoney,
-      daysActive: 1,
-      isCurrentUser: true,
-    });
-
-    rhEntries.push({
-      userId: currentUserId,
-      username,
-      profitPct: userRhLivePl,
-      moneyMade: userRhLiveMoney,
-      daysActive: 1,
-      isCurrentUser: true,
-    });
+    if (userBrokerType === "ALPACA" && isPaper) {
+      paperEntries.push(unregisteredEntry);
+    } else if (userBrokerType === "ALPACA" && !isPaper) {
+      liveEntries.push(unregisteredEntry);
+    } else if (userBrokerType === "ROBINHOOD") {
+      rhEntries.push(unregisteredEntry);
+    }
   }
 
   // Sort matrices descending by profitPct

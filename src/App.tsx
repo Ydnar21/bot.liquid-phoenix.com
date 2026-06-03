@@ -11,7 +11,6 @@ import PerformanceHistory from "./components/PerformanceHistory";
 import UsernameModal from "./components/UsernameModal";
 import LeaderboardPanel from "./components/LeaderboardPanel";
 import FuturisticStockChart from "./components/FuturisticStockChart";
-import PythonSyncHub from "./components/PythonSyncHub";
 import { auth, googleProvider, appleProvider, signInWithPopup, signOut, db, switchToDefaultClientDb } from "./firebase";
 import { onAuthStateChanged, User, updateProfile } from "firebase/auth";
 import { doc, setDoc, getDoc } from "firebase/firestore";
@@ -19,7 +18,7 @@ import { doc, setDoc, getDoc } from "firebase/firestore";
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"dashboard" | "leaderboard" | "pythonSync">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "leaderboard">("dashboard");
   
   const [username, setUsername] = useState<string>("");
   const [showUsernameSetup, setShowUsernameSetup] = useState<boolean>(false);
@@ -1142,16 +1141,6 @@ export default function App() {
             Live Dashboard View
           </button>
           <button
-            onClick={() => setActiveTab("pythonSync")}
-            className={`font-mono text-xs font-bold uppercase tracking-wider pb-2 border-b-2 transition-all cursor-pointer flex items-center gap-2 ${
-              activeTab === "pythonSync"
-                ? "border-theme-accent text-white"
-                : "border-transparent text-gray-500 hover:text-gray-300"
-            }`}
-          >
-            Python Bot Sync
-          </button>
-          <button
             onClick={() => setActiveTab("leaderboard")}
             className={`font-mono text-xs font-bold uppercase tracking-wider pb-2 border-b-2 transition-all cursor-pointer flex items-center gap-2 ${
               activeTab === "leaderboard"
@@ -1165,8 +1154,6 @@ export default function App() {
 
         {activeTab === "leaderboard" ? (
           <LeaderboardPanel currentUserId={user?.uid} />
-        ) : activeTab === "pythonSync" ? (
-          <PythonSyncHub currentUser={user} />
         ) : (
           <>
             {/* Core Quick Rule Highlights banner */}

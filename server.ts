@@ -188,7 +188,8 @@ async function startServer() {
   // API 8: Manually trigger setup screening scanner
   app.post("/api/scan", async (req, res) => {
     // Run scan asynchronously to avoid blocking API responses
-    scanForSetups();
+    const userId = (req.query.userId || req.body?.userId) as string | undefined;
+    scanForSetups(userId);
     res.json({ success: true, message: "Scanner successfully initialized on server background." });
   });
 

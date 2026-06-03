@@ -1097,8 +1097,9 @@ let lastLoggedConnectionErrorMap: Record<string, string> = {};
 // Get user account details directly from Alpaca
 export async function getUserAccount(userId: string): Promise<any> {
   const creds = await resolveCredentialsForUser(userId);
+  const session = getUserSession(userId);
 
-  if (!botConfig.isConnectionActive && !botConfig.isBotRunning) {
+  if (!session.botConfig.isConnectionActive && !session.botConfig.isBotRunning) {
     if (creds && creds.brokerType === "ROBINHOOD") {
       return { status: "bot_paused", broker: "ROBINHOOD" };
     }
@@ -1152,13 +1153,13 @@ export async function getUserAccount(userId: string): Promise<any> {
       }
 
       // Ensure stable matching values if fields were omitted
-      if (longMarketValue === 0 && activePosition) {
-        longMarketValue = activePosition.currentValue;
+      if (longMarketValue === 0 && session.activePosition) {
+        longMarketValue = session.activePosition.currentValue;
       }
       if (equity === 100000.0 && cash === 100000.0) {
-        const entryCost = activePosition ? activePosition.entryValue : 0.0;
+        const entryCost = session.activePosition ? session.activePosition.entryValue : 0.0;
         cash = equity - entryCost;
-        longMarketValue = activePosition ? activePosition.currentValue : 0.0;
+        longMarketValue = session.activePosition ? session.activePosition.currentValue : 0.0;
         equity = cash + longMarketValue;
         buyingPower = equity * 2.5;
       }

@@ -738,11 +738,9 @@ export async function getAllUserCredentials(): Promise<UserCredentials[]> {
   return credentialsList;
 }
 
-// Memory cache for user credentials to avoid repeated Firestore/disk references unless needed
-export const loadedCredentialsCache = new Map<string, UserCredentials>();
-
+// Memory cache removed at user's request. Credentials are loaded fresh on-demand.
 export function invalidateCredentialsCache(userId: string) {
-  loadedCredentialsCache.delete(userId);
+  // Credentials are not cached in memory, they are fetched directly from Firestore / disk backups whenever needed!
 }
 
 // User-specific or Fallback credentials resolver
@@ -750,18 +748,8 @@ export async function ensureUserCredentialsLoaded(userId: string): Promise<void>
   if (!userId) return;
 
   const session = getUserSession(userId);
-  const hasCredentialsInMemory = 
-    (session.botConfig.ALPACA_API_KEY && session.botConfig.ALPACA_SECRET_KEY) ||
-    session.botConfig.isConnectionActive;
-
-  if (hasCredentialsInMemory && loadedCredentialsCache.has(userId)) {
-    // Already loaded in memory cache, bypass database reference!
-    return;
-  }
-
   const creds = await resolveCredentialsForUser(userId);
   if (creds) {
-    loadedCredentialsCache.set(userId, creds);
     let changed = false;
     if (creds.brokerType === "ROBINHOOD") {
       // Clear out Alpaca variables to prevent overlap
@@ -803,7 +791,6 @@ export async function ensureUserCredentialsLoaded(userId: string): Promise<void>
       changed = true;
     }
     if (changed) {
-      addLog("SUCCESS", `[CONNECTION ENGINE] Stored credentials for user ${userId} found and synced to memory cache in ${creds.brokerType || "ALPACA"} mode.`, userId);
       saveUserStateToDisk(userId);
     }
   }
@@ -812,11 +799,6 @@ export async function ensureUserCredentialsLoaded(userId: string): Promise<void>
 // User-specific or Fallback credentials resolver
 export async function resolveCredentialsForUser(userId?: string): Promise<UserCredentials | null> {
   if (userId) {
-    const cached = loadedCredentialsCache.get(userId);
-    if (cached) {
-      return cached;
-    }
-
     // 1. Try local offline fallback backup file
     const fallbackPath = `./private_creds_${userId}.json`;
     if (fs.existsSync(fallbackPath)) {
@@ -839,7 +821,6 @@ export async function resolveCredentialsForUser(userId?: string): Promise<UserCr
             OPENAI_API_KEY: parsed.OPENAI_API_KEY,
             ROBINHOOD_LLM_PROVIDER: parsed.ROBINHOOD_LLM_PROVIDER || "GEMINI",
           };
-          loadedCredentialsCache.set(userId, credsObj);
           return credsObj;
         }
       } catch (e: any) {
@@ -870,7 +851,6 @@ export async function resolveCredentialsForUser(userId?: string): Promise<UserCr
               OPENAI_API_KEY: data.OPENAI_API_KEY,
               ROBINHOOD_LLM_PROVIDER: data.ROBINHOOD_LLM_PROVIDER || "GEMINI",
             };
-            loadedCredentialsCache.set(userId, credsObj);
             return credsObj;
           }
         }
@@ -900,7 +880,6 @@ export async function resolveCredentialsForUser(userId?: string): Promise<UserCr
   if (users.length > 0 && userId) {
     const match = users.find((u) => u.userId === userId);
     if (match) {
-      loadedCredentialsCache.set(userId, match);
       return match;
     }
   }

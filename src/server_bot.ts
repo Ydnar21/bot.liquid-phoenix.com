@@ -1966,6 +1966,7 @@ export async function scanForSetups(userId?: string) {
 
     // Loop through scanner universe
     for (const ticker of scanUniverse) {
+      if (evaluatedCount >= 30) break;
       try {
         const bars = await fetchAlpacaBars(ticker, 365, userId);
         if (!bars || bars.length < 200) continue;
@@ -2998,12 +2999,15 @@ export function checkAndTriggerScheduledScans() {
     const hours = nyDate.getHours();
     const minutes = nyDate.getMinutes();
     
-    // Target times: 9:30 AM, 11:00 AM, 1:00 PM, 4:00 PM Eastern Time
+    // Target times: 8:00 AM, 9:00 AM, 9:30 AM, 11:00 AM, 1:00 PM, 3:00 PM, 5:00 PM Eastern Time
     const targets = [
+      { h: 8, m: 0, label: "08:00 AM" },
+      { h: 9, m: 0, label: "09:00 AM" },
       { h: 9, m: 30, label: "09:30 AM" },
       { h: 11, m: 0, label: "11:00 AM" },
       { h: 13, m: 0, label: "01:00 PM" },
-      { h: 16, m: 0, label: "04:00 PM" }
+      { h: 15, m: 0, label: "03:00 PM" },
+      { h: 17, m: 0, label: "05:00 PM" }
     ];
     
     const match = targets.find((t) => t.h === hours && t.m === minutes);
@@ -3036,7 +3040,7 @@ export function restartCronEngine() {
 
   if (botConfig.isBotRunning) {
     addLog("SUCCESS", `Bot State: ACTIVE. Scheduling evaluation loops every ${botConfig.scanIntervalMinutes} minutes.`);
-    addLog("INFO", "Schedules activated for daily scans at 9:30 AM, 11:00 AM, 1:00 PM, and 4:00 PM Eastern Time for premium swing trades.");
+    addLog("INFO", "Schedules activated for daily scans at 8:00 AM, 9:00 AM, 9:30 AM, 11:00 AM, 1:00 PM, 3:00 PM, and 5:00 PM Eastern Time for premium swing trades.");
     botState.isActive = true;
 
     // Self-healing: Catch-up check on container wake-up or server boots in Cloud Run

@@ -1225,21 +1225,6 @@ export default function App() {
                   </div>
                 ) : (
                   <>
-                    {!config.isBotRunning && (
-                      <div className="bg-amber-500/10 border border-amber-500/30 rounded p-4 text-xs font-mono text-amber-400 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
-                        <div className="flex items-center gap-2">
-                          <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" />
-                          <span><strong>Terminal Mode Active &bull; Swing Scheduler Paused:</strong> Real-time balances and tracking panels are connected, but autonomous automated scans and buy/sell execution sequences are currently offline.</span>
-                        </div>
-                        <button
-                          onClick={handleToggleBot}
-                          className="bg-amber-500 hover:bg-amber-400 text-black px-3 py-1.5 rounded font-black uppercase text-[10px] transition-colors cursor-pointer shrink-0 text-center"
-                        >
-                          Activate Trading
-                        </button>
-                      </div>
-                    )}
-
                     {config.isBotRunning && !botState.isMarketOpen && (
                       <div className="bg-amber-500/10 border border-amber-500/30 rounded p-4 text-xs font-mono text-amber-500 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
                         <div className="flex items-center gap-2">

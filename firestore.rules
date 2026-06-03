@@ -60,6 +60,10 @@ service cloud.firestore {
       allow delete: if isOwner(userId) && isValidId(userId);
     }
 
+    match /users/{userId}/private/state {
+      allow read, write: if isOwner(userId) && isValidId(userId);
+    }
+
     match /users/{userId}/terminal_v1/filesystem {
       allow read: if isOwner(userId) && isValidId(userId);
       allow create: if isOwner(userId) && isValidId(userId) && isValidTerminalWorkspace(request.resource.data);

@@ -215,13 +215,14 @@ export function maskCredentialsInText(text: string): string {
 }
 
 // Helper to push logs
-export function addLog(level: "INFO" | "SUCCESS" | "WARNING" | "ERROR", message: string) {
+export function addLog(level: "INFO" | "SUCCESS" | "WARNING" | "ERROR", message: string, userId?: string) {
   const timestamp = new Date().toISOString();
   const maskedMessage = maskCredentialsInText(message);
-  botLogs.unshift({ timestamp, level, message: maskedMessage });
-  if (botLogs.length > 300) botLogs.pop(); // Keep last 300 logs
-  console.log(`[${level}] ${timestamp}: ${maskedMessage}`);
-  saveStateToDisk();
+  const session = getUserSession(userId);
+  session.botLogs.unshift({ timestamp, level, message: maskedMessage });
+  if (session.botLogs.length > 300) session.botLogs.pop(); // Keep last 300 logs
+  console.log(`[${level}] [USER: ${userId || "GLOBAL"}] ${timestamp}: ${maskedMessage}`);
+  saveUserStateToDisk(userId);
 }
 
 // Ensure database file gets loaded
@@ -416,6 +417,204 @@ interface UserCredentials {
   ROBINHOOD_LLM_PROVIDER?: "GEMINI" | "CLAUDE" | "OPENAI";
 }
 
+// User-specific states mapping and containers for true Multi-User Isolated Accounts
+interface UserStateContainer {
+  botConfig: BotConfig;
+  activePosition: ActivePosition | null;
+  closedTrades: ClosedTrade[];
+  botLogs: BotLog[];
+  botState: BotState;
+}
+
+const userSessionStates = new Map<string, UserStateContainer>();
+let userFirestoreSaveTimeoutIds = new Map<string, NodeJS.Timeout>();
+
+export function getUserSession(userId?: string): UserStateContainer {
+  if (!userId) {
+    // Return a default/global fallback container to sustain legacy background loops gracefully.
+    return {
+      botConfig,
+      activePosition,
+      closedTrades,
+      botLogs,
+      botState,
+    };
+  }
+
+  let session = userSessionStates.get(userId);
+  if (!session) {
+    // Initialize standard isolation container for new user sessions
+    session = {
+      botConfig: {
+        ALPACA_API_KEY: "",
+        ALPACA_SECRET_KEY: "",
+        ALPACA_BASE_URL: "https://paper-api.alpaca.markets",
+        GEMINI_API_KEY: process.env.GEMINI_API_KEY || "",
+        NEWSAPI_KEY: "",
+        isPaper: true,
+        isBotRunning: false,
+        isConnectionActive: false,
+        scanIntervalMinutes: 5,
+      },
+      activePosition: null,
+      closedTrades: [],
+      botLogs: [],
+      botState: {
+        isActive: false,
+        lastScanTime: null,
+        nextScanTime: null,
+        marketRegime: "NORMAL",
+        spySma50: 0,
+        spySma200: 0,
+        spyPrice: 0,
+        fomcBlackout: false,
+        isMarketOpen: true,
+        storedEvents: [],
+      },
+    };
+    userSessionStates.set(userId, session);
+    
+    // Attempt asynchronous load from disk/Firestore (will complete in background)
+    loadUserStateFromDbOrDisk(userId).catch((err) => {
+      console.warn(`[USER SESSION INIT] Background load failed for user ${userId}:`, err.message);
+    });
+  }
+  return session;
+}
+
+export async function loadUserStateFromDbOrDisk(userId: string): Promise<void> {
+  const session = getUserSession(userId);
+  const DATA_FILE_USER = path.resolve(`./trading_state_${userId}.json`);
+
+  // 1. Try loading from Firestore (users/{userId}/private/state)
+  try {
+    const db = getDb();
+    if (db && typeof db.collection === "function") {
+      const snap = await db.collection("users").doc(userId).collection("private").doc("state").get();
+      if (snap.exists) {
+        const parsed = snap.data();
+        if (parsed) {
+          if (parsed.botConfig) session.botConfig = { ...session.botConfig, ...parsed.botConfig };
+          if (parsed.activePosition !== undefined) session.activePosition = parsed.activePosition;
+          if (parsed.closedTrades) session.closedTrades = parsed.closedTrades;
+          if (parsed.botLogs) session.botLogs = parsed.botLogs;
+          if (parsed.botState) session.botState = { ...session.botState, ...parsed.botState };
+          
+          console.log(`[Firebase Server] Trading state loaded successfully from Firestore for user ${userId}.`);
+          // Save a cached copy to the localized disk
+          fs.writeFileSync(DATA_FILE_USER, JSON.stringify(parsed, null, 2), "utf-8");
+          return;
+        }
+      }
+    }
+  } catch (err: any) {
+    if (isFirestoreDatabaseError(err)) {
+      switchToDefaultDatabase();
+      try {
+        const db = getDb();
+        if (db && typeof db.collection === "function") {
+          const snap = await db.collection("users").doc(userId).collection("private").doc("state").get();
+          if (snap.exists) {
+            const parsed = snap.data();
+            if (parsed) {
+              if (parsed.botConfig) session.botConfig = { ...session.botConfig, ...parsed.botConfig };
+              if (parsed.activePosition !== undefined) session.activePosition = parsed.activePosition;
+              if (parsed.closedTrades) session.closedTrades = parsed.closedTrades;
+              if (parsed.botLogs) session.botLogs = parsed.botLogs;
+              if (parsed.botState) session.botState = { ...session.botState, ...parsed.botState };
+              
+              console.log(`[Firebase Server] Trading state loaded successfully from Firestore default fallback for user ${userId}.`);
+              fs.writeFileSync(DATA_FILE_USER, JSON.stringify(parsed, null, 2), "utf-8");
+              return;
+            }
+          }
+        }
+      } catch (retryErr: any) {
+         // Fall through silently to disk fallback
+      }
+    }
+  }
+
+  // 2. Try fallback to user's localized disk cache file
+  try {
+    if (fs.existsSync(DATA_FILE_USER)) {
+      const raw = fs.readFileSync(DATA_FILE_USER, "utf-8");
+      const parsed = JSON.parse(raw);
+      if (parsed.botConfig) session.botConfig = { ...session.botConfig, ...parsed.botConfig };
+      if (parsed.activePosition) session.activePosition = parsed.activePosition;
+      if (parsed.closedTrades) session.closedTrades = parsed.closedTrades;
+      if (parsed.botLogs) session.botLogs = parsed.botLogs;
+      if (parsed.botState) session.botState = { ...session.botState, ...parsed.botState };
+      console.log(`[Local Server] Trading state loaded successfully from local files for user ${userId}.`);
+    }
+  } catch (err: any) {
+    console.error(`Failed to load localized state files for user ${userId}:`, err.message);
+  }
+}
+
+export function saveUserStateToDisk(userId?: string) {
+  if (!userId) {
+    saveStateToDisk(); // standard global save legacy backup
+    return;
+  }
+
+  const session = getUserSession(userId);
+  const DATA_FILE_USER = path.resolve(`./trading_state_${userId}.json`);
+  const data = {
+    botConfig: session.botConfig,
+    activePosition: session.activePosition,
+    closedTrades: session.closedTrades,
+    botState: session.botState,
+    botLogs: session.botLogs,
+  };
+
+  // 1. Local backup sync
+  try {
+    fs.writeFileSync(DATA_FILE_USER, JSON.stringify(data, null, 2), "utf-8");
+  } catch (err) {
+    console.error(`Failed to save localized state for user ${userId} to local cache:`, err);
+  }
+
+  // 2. Debounce/Throttle writes to Firestore
+  let timeoutId = userFirestoreSaveTimeoutIds.get(userId);
+  if (timeoutId) {
+    clearTimeout(timeoutId);
+  }
+
+  timeoutId = setTimeout(async () => {
+    try {
+      const db = getDb();
+      if (db && typeof db.collection === "function") {
+        await db.collection("users").doc(userId).collection("private").doc("state").set({
+          ...data,
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+        console.log(`[Firebase Server] Trading state synchronized to Firestore for user ${userId}.`);
+      }
+    } catch (err: any) {
+      if (isFirestoreDatabaseError(err)) {
+        switchToDefaultDatabase();
+        try {
+          const db = getDb();
+          if (db && typeof db.collection === "function") {
+            await db.collection("users").doc(userId).collection("private").doc("state").set({
+              ...data,
+              updatedAt: new Date().toISOString()
+            }, { merge: true });
+            console.log(`[Firebase Server] Trading state synchronized to Firestore default fallback for user ${userId}.`);
+          }
+        } catch (retryErr: any) {
+          console.error(`Tried falling back to default Firestore database on save state for user ${userId} but failed again.`);
+        }
+      } else {
+        console.error(`Async Firestore state save failed for user ${userId}:`, err.message);
+      }
+    }
+  }, 1000);
+
+  userFirestoreSaveTimeoutIds.set(userId, timeoutId);
+}
+
 // Get all user credentials from Firestore credentials collection group
 export async function getAllUserCredentials(): Promise<UserCredentials[]> {
   const credentialsList: UserCredentials[] = [];
@@ -535,49 +734,50 @@ export async function ensureUserCredentialsLoaded(userId: string): Promise<void>
   if (!userId) return;
   const creds = await resolveCredentialsForUser(userId);
   if (creds) {
+    const session = getUserSession(userId);
     let changed = false;
     if (creds.brokerType === "ROBINHOOD") {
       // Clear out Alpaca variables to prevent overlap
-      if (botConfig.ALPACA_API_KEY !== "") {
-        botConfig.ALPACA_API_KEY = "";
+      if (session.botConfig.ALPACA_API_KEY !== "") {
+        session.botConfig.ALPACA_API_KEY = "";
         changed = true;
       }
-      if (botConfig.ALPACA_SECRET_KEY !== "") {
-        botConfig.ALPACA_SECRET_KEY = "";
+      if (session.botConfig.ALPACA_SECRET_KEY !== "") {
+        session.botConfig.ALPACA_SECRET_KEY = "";
         changed = true;
       }
     } else {
-      if (botConfig.ALPACA_API_KEY !== (creds.ALPACA_API_KEY || "")) {
-        botConfig.ALPACA_API_KEY = creds.ALPACA_API_KEY || "";
+      if (session.botConfig.ALPACA_API_KEY !== (creds.ALPACA_API_KEY || "")) {
+        session.botConfig.ALPACA_API_KEY = creds.ALPACA_API_KEY || "";
         changed = true;
       }
-      if (botConfig.ALPACA_SECRET_KEY !== (creds.ALPACA_SECRET_KEY || "")) {
-        botConfig.ALPACA_SECRET_KEY = creds.ALPACA_SECRET_KEY || "";
+      if (session.botConfig.ALPACA_SECRET_KEY !== (creds.ALPACA_SECRET_KEY || "")) {
+        session.botConfig.ALPACA_SECRET_KEY = creds.ALPACA_SECRET_KEY || "";
         changed = true;
       }
-      if (botConfig.ALPACA_BASE_URL !== (creds.ALPACA_BASE_URL || "")) {
-        botConfig.ALPACA_BASE_URL = creds.ALPACA_BASE_URL || "";
+      if (session.botConfig.ALPACA_BASE_URL !== (creds.ALPACA_BASE_URL || "")) {
+        session.botConfig.ALPACA_BASE_URL = creds.ALPACA_BASE_URL || "";
         changed = true;
       }
     }
     const credGKey = creds.GEMINI_API_KEY || "";
-    if (botConfig.GEMINI_API_KEY !== credGKey) {
-      botConfig.GEMINI_API_KEY = credGKey;
+    if (session.botConfig.GEMINI_API_KEY !== credGKey) {
+      session.botConfig.GEMINI_API_KEY = credGKey;
       changed = true;
     }
     const credCKey = creds.CLAUDE_API_KEY || "";
-    if (botConfig.CLAUDE_API_KEY !== credCKey) {
-      botConfig.CLAUDE_API_KEY = credCKey;
+    if (session.botConfig.CLAUDE_API_KEY !== credCKey) {
+      session.botConfig.CLAUDE_API_KEY = credCKey;
       changed = true;
     }
     const credOKey = creds.OPENAI_API_KEY || "";
-    if (botConfig.OPENAI_API_KEY !== credOKey) {
-      botConfig.OPENAI_API_KEY = credOKey;
+    if (session.botConfig.OPENAI_API_KEY !== credOKey) {
+      session.botConfig.OPENAI_API_KEY = credOKey;
       changed = true;
     }
     if (changed) {
-      addLog("SUCCESS", `[CONNECTION ENGINE] Stored credentials for user ${userId} found and synced to memory cache in ${creds.brokerType || "ALPACA"} mode.`);
-      saveStateToDisk();
+      addLog("SUCCESS", `[CONNECTION ENGINE] Stored credentials for user ${userId} found and synced to memory cache in ${creds.brokerType || "ALPACA"} mode.`, userId);
+      saveUserStateToDisk(userId);
     }
   }
 }
@@ -650,12 +850,11 @@ export async function resolveCredentialsForUser(userId?: string): Promise<UserCr
     }
   }
 
-  // 3. Fallback to first registered user credentials
+  // 3. Strict multi-user boundaries: If userId is provided, return their matching credentials only
   const users = await getAllUserCredentials();
-  if (users.length > 0) {
-    const match = userId ? users.find((u) => u.userId === userId) : null;
-    const chosen = match || users[0];
-    return chosen;
+  if (users.length > 0 && userId) {
+    const match = users.find((u) => u.userId === userId);
+    if (match) return match;
   }
 
   // 4. Default to master bot settings
@@ -1459,7 +1658,7 @@ async function checkFOMCBlackout() {
 // Main autonomous scanner function
 export async function scanForSetups(userId?: string) {
   addLog("INFO", "Initiating scan for high-quality setups across S&P 500 & Nasdaq 100 constituents...");
-  scannedSetups = [];
+  // Proposals stay and remain persistent across accounts until the new scan completes successfully.
   saveStateToDisk();
 
   try {
@@ -1840,17 +2039,18 @@ async function runGeminiSentimentAgent(setup: StockSetup, userId?: string): Prom
 
 // Portfolio deployment & Trade placement via Alpaca
 export async function deployPortfolio(symbol: string, userId?: string): Promise<boolean> {
-  addLog("INFO", `Attempting to deploy 100% of portfolio equity to buy ${symbol}...`);
+  addLog("INFO", `Attempting to deploy 100% of portfolio equity to buy ${symbol}...`, userId);
 
   try {
+    const session = getUserSession(userId);
     // Strict requirement: Only allow trading of the 30 listed stocks in SECTOR_LEADERS (Bypassed if there are no hard blocks)
     if (!SECTOR_LEADERS.includes(symbol.toUpperCase())) {
-      addLog("WARNING", `Notice: ${symbol} is outside the standard 30 SECTOR_LEADERS list. Proceeding with deployment since there are no hard blocks.`);
+      addLog("WARNING", `Notice: ${symbol} is outside the standard 30 SECTOR_LEADERS list. Proceeding with deployment since there are no hard blocks.`, userId);
     }
 
     // 1. Enforce Max 1 Trade at a time
-    if (activePosition) {
-      throw new Error(`Cannot deploy portfolio. Active position in ${activePosition.symbol} already exists.`);
+    if (session.activePosition) {
+      throw new Error(`Cannot deploy portfolio. Active position in ${session.activePosition.symbol} already exists.`);
     }
 
     // Double check Alpaca for any active positions to synchronize perfectly!
@@ -1858,7 +2058,7 @@ export async function deployPortfolio(symbol: string, userId?: string): Promise<
     try {
       positionsOnAlpaca = await alpacaFetch("/v2/positions", {}, userId);
     } catch (e) {
-      addLog("WARNING", "Could not verify open positions on Alpaca. Proceeding with in-memory check.");
+      addLog("WARNING", "Could not verify open positions on Alpaca. Proceeding with in-memory check.", userId);
     }
 
     if (positionsOnAlpaca && positionsOnAlpaca.length > 0) {
@@ -2029,7 +2229,7 @@ export async function deployPortfolio(symbol: string, userId?: string): Promise<
     }
 
     // Set Active Position Details
-    activePosition = {
+    session.activePosition = {
       symbol,
       companyName: proposal.companyName,
       qty: totalExecutedQty || 1,
@@ -2057,21 +2257,22 @@ export async function deployPortfolio(symbol: string, userId?: string): Promise<
     };
 
     // Use Gemini with Search Grounding to find precise company earnings date to schedule the exit!
-    await updatePreciseDatesForPosition();
+    await updatePreciseDatesForPosition(userId);
 
-    saveStateToDisk();
+    saveUserStateToDisk(userId);
     return true;
 
   } catch (err: any) {
-    addLog("ERROR", `Failed to deploy portfolio on ${symbol}: ${err.message}`);
+    addLog("ERROR", `Failed to deploy portfolio on ${symbol}: ${err.message}`, userId);
     return false;
   }
 }
 
 // Fetch precise company earnings and events via Gemini
-async function updatePreciseDatesForPosition() {
-  if (!activePosition) return;
-  const geminiKey = botConfig.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+async function updatePreciseDatesForPosition(userId?: string) {
+  const session = getUserSession(userId);
+  if (!session.activePosition) return;
+  const geminiKey = session.botConfig.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
   if (!geminiKey) return;
 
   try {
@@ -2080,7 +2281,7 @@ async function updatePreciseDatesForPosition() {
       httpOptions: { headers: { "User-Agent": "aistudio-build" } },
     });
 
-    const prompt = `Identify the exact upcoming quarterly earnings announcement date of ${activePosition.symbol} (${activePosition.companyName}).
+    const prompt = `Identify the exact upcoming quarterly earnings announcement date of ${session.activePosition.symbol} (${session.activePosition.companyName}).
     Verify the upcoming high-priority catalyst event schedule date (e.g. launch, hearing).
     Format your response exactly as this JSON schema:
     {
@@ -2099,19 +2300,19 @@ async function updatePreciseDatesForPosition() {
     });
 
     const parsed = cleanAndParseJSON(response.text?.trim() || "{}");
-    if (parsed.earningsDate && activePosition) {
-      activePosition.earningsDate = parsed.earningsDate;
-      addLog("SUCCESS", `Target Earnings Date for ${activePosition.symbol}: ${parsed.earningsDate}`);
-      storeEvent("EARNINGS", `${activePosition.symbol} Quarterly Earnings`, parsed.earningsDate, activePosition.symbol, "Active holding quarterly earnings date.");
+    if (parsed.earningsDate && session.activePosition) {
+      session.activePosition.earningsDate = parsed.earningsDate;
+      addLog("SUCCESS", `Target Earnings Date for ${session.activePosition.symbol}: ${parsed.earningsDate}`, userId);
+      storeEvent("EARNINGS", `${session.activePosition.symbol} Quarterly Earnings`, parsed.earningsDate, session.activePosition.symbol, "Active holding quarterly earnings date.");
     }
-    if (parsed.catalystDate && parsed.catalystEvent && activePosition) {
-      activePosition.catalystDate = parsed.catalystDate;
-      activePosition.catalystEvent = parsed.catalystEvent;
-      addLog("SUCCESS", `Identified Catalyst Event: ${parsed.catalystEvent} on ${parsed.catalystDate}`);
-      storeEvent("CATALYST", `${activePosition.symbol}: ${parsed.catalystEvent}`, parsed.catalystDate, activePosition.symbol, "Active holding high-priority catalyst event.");
+    if (parsed.catalystDate && parsed.catalystEvent && session.activePosition) {
+      session.activePosition.catalystDate = parsed.catalystDate;
+      session.activePosition.catalystEvent = parsed.catalystEvent;
+      addLog("SUCCESS", `Identified Catalyst Event: ${parsed.catalystEvent} on ${parsed.catalystDate}`, userId);
+      storeEvent("CATALYST", `${session.activePosition.symbol}: ${parsed.catalystEvent}`, parsed.catalystDate, session.activePosition.symbol, "Active holding high-priority catalyst event.");
     }
 
-    saveStateToDisk();
+    saveUserStateToDisk(userId);
 
   } catch (err: any) {
     console.warn("Could not fetch precise dates with Gemini search:", err.message);
@@ -2258,35 +2459,46 @@ async function runGeminiRiskReevaluation() {
 }
 
 // Execute Sell exits on Alpaca
-export async function executeExit(symbol: string, reason: string): Promise<boolean> {
-  addLog("INFO", `Triggering exit sequence for ${symbol}. Reason: ${reason}...`);
+export async function executeExit(symbol: string, reason: string, userId?: string): Promise<boolean> {
+  addLog("INFO", `Triggering exit sequence for ${symbol}. Reason: ${reason}...`, userId);
 
   try {
-    if (!activePosition || activePosition.symbol !== symbol) {
+    const session = getUserSession(userId);
+    if (!session.activePosition || session.activePosition.symbol !== symbol) {
       throw new Error(`Unable to sell. No matching open state tracking found for ${symbol}.`);
     }
 
-    const trackerQty = activePosition.qty;
-    const users = await getAllUserCredentials();
+    const trackerQty = session.activePosition.qty;
+    let users: UserCredentials[] = [];
+    if (userId) {
+      const specificCreds = await resolveCredentialsForUser(userId);
+      if (specificCreds) {
+        users.push(specificCreds);
+      }
+    }
+    if (users.length === 0) {
+      users = await getAllUserCredentials();
+    }
+    
     let anySuccess = false;
 
     // Fetch precise real-time sell rate to set limit price for the exit order
-    let filledPrice = activePosition.currentPrice;
+    let filledPrice = session.activePosition.currentPrice;
     try {
-      filledPrice = await fetchLatestStockPrice(symbol);
+      filledPrice = await fetchLatestStockPrice(symbol, userId);
     } catch (_) {}
 
     // Place a marketable limit order at 1% below current bids to guarantee fill in both core + extended sessions
     const exitLimitPrice = Math.round(filledPrice * 0.99 * 100) / 100;
 
     if (users.length > 0) {
-      addLog("INFO", `Copy Trading Liquidations: Scanning ${users.length} registered accounts for open positions...`);
+      addLog("INFO", `Copy Trading Liquidations: Scanning ${users.length} registered accounts for open positions...`, userId);
       for (const creds of users) {
         try {
           if (creds.brokerType === "ROBINHOOD") {
-            addLog("INFO", `[User ${creds.userId}] [ROBINHOOD MCP] Routing live liquidation: Action: SELL, Asset: ${symbol} to ${creds.ROBINHOOD_MCP_URL || 'https://agent.robinhood.com/mcp/trading'}`);
+            addLog("INFO", `[User ${creds.userId}] [ROBINHOOD MCP] Routing live liquidation: Action: SELL, Asset: ${symbol} to ${creds.ROBINHOOD_MCP_URL || 'https://agent.robinhood.com/mcp/trading'}`, userId);
             await connectToRobinhoodMcp(creds, "SELL", { symbol, qty: trackerQty });
-            addLog("SUCCESS", `[User ${creds.userId}] [ROBINHOOD MCP] Custom Trading MCP executed liquidation successfully! Transmitted market exit order. Order Ref: rh_exit_` + Math.random().toString(36).substring(2, 10));
+            addLog("SUCCESS", `[User ${creds.userId}] [ROBINHOOD MCP] Custom Trading MCP executed liquidation successfully! Transmitted market exit order. Order Ref: rh_exit_` + Math.random().toString(36).substring(2, 10), userId);
             anySuccess = true;
             continue;
           }
@@ -2309,19 +2521,19 @@ export async function executeExit(symbol: string, reason: string): Promise<boole
                 method: "POST",
                 body: JSON.stringify(sellPayload),
               });
-              addLog("SUCCESS", `[User ${creds.userId}] Exit limit order transmitted successfully! Sold ${userQty} shares at limit price $${exitLimitPrice.toFixed(2)}. Order ID: ${sellRes.id}`);
+              addLog("SUCCESS", `[User ${creds.userId}] Exit limit order transmitted successfully! Sold ${userQty} shares at limit price $${exitLimitPrice.toFixed(2)}. Order ID: ${sellRes.id}`, userId);
               anySuccess = true;
             }
           } else {
-            addLog("WARNING", `[User ${creds.userId}] No open position found for ticker ${symbol} to liquidate.`);
+            addLog("WARNING", `[User ${creds.userId}] No open position found for ticker ${symbol} to liquidate.`, userId);
           }
         } catch (uErr: any) {
-          addLog("ERROR", `[User ${creds.userId}] Failed to place copy liquidation for ${symbol}: ${uErr.message}`);
+          addLog("ERROR", `[User ${creds.userId}] Failed to place copy liquidation for ${symbol}: ${uErr.message}`, userId);
         }
       }
     } else {
       // Fallback single-user
-      addLog("INFO", "No multi-user credentials found in Firestore. Routing liquidation to default settings...");
+      addLog("INFO", "No multi-user credentials found in Firestore. Routing liquidation to default settings...", userId);
       const sellPayload = {
         symbol,
         qty: trackerQty.toString(),
@@ -2334,25 +2546,25 @@ export async function executeExit(symbol: string, reason: string): Promise<boole
       const sellRes = await alpacaFetch("/v2/orders", {
         method: "POST",
         body: JSON.stringify(sellPayload),
-      });
-      addLog("SUCCESS", `Default connection exit limit order placed successfully! Qty: ${trackerQty}, limit price: $${exitLimitPrice.toFixed(2)}, Order ID: ${sellRes.id}`);
+      }, userId);
+      addLog("SUCCESS", `Default connection exit limit order placed successfully! Qty: ${trackerQty}, limit price: $${exitLimitPrice.toFixed(2)}, Order ID: ${sellRes.id}`, userId);
       anySuccess = true;
     }
 
     if (anySuccess) {
       // It should NOT be considered a closed trade until the sell order is filled
       // Instead, we mark it as EXITING, and let the sync engine calculate statistics using Alpaca when it's closed!
-      activePosition.status = "EXITING";
-      activePosition.reviewReason = reason; // preserve the exit reason
-      saveStateToDisk();
-      addLog("SUCCESS", `Exit limit order has been successfully transmitted. Status marked as EXITING. The trade remains active and will NOT be registered as completed/realized until execution is fully filled by the broker.`);
+      session.activePosition.status = "EXITING";
+      session.activePosition.reviewReason = reason; // preserve the exit reason
+      saveUserStateToDisk(userId);
+      addLog("SUCCESS", `Exit limit order has been successfully transmitted. Status marked as EXITING. The trade remains active and will NOT be registered as completed/realized until execution is fully filled by the broker.`, userId);
       return true;
     } else {
       throw new Error("Failed to place exit limit order on any linked accounts.");
     }
 
   } catch (err: any) {
-    addLog("ERROR", `Sell Order execution failed: ${err.message}`);
+    addLog("ERROR", `Sell Order execution failed: ${err.message}`, userId);
     return false;
   }
 }
@@ -2517,7 +2729,8 @@ export function restartCronEngine() {
 export async function syncActivePositionWithLiveTrades(userId?: string) {
   try {
     const creds = await resolveCredentialsForUser(userId);
-    if (!creds || !botConfig.isConnectionActive) {
+    const session = getUserSession(userId);
+    if (!creds || !session.botConfig.isConnectionActive) {
       return;
     }
 
@@ -2539,13 +2752,13 @@ export async function syncActivePositionWithLiveTrades(userId?: string) {
         const unrealizedPlPct = parseFloat(livePos.unrealized_plpc) * 100;
 
         // If there is no activePosition in-memory, or if the in-memory activePosition symbol is different, sync standard metadata
-        if (!activePosition || activePosition.symbol !== symbol) {
-          addLog("SUCCESS", `[SYNC ENGINE] Detected open live trade on Alpaca for ${symbol}. Syncing state to main dashboard...`);
+        if (!session.activePosition || session.activePosition.symbol !== symbol) {
+          addLog("SUCCESS", `[SYNC ENGINE] Detected open live trade on Alpaca for ${symbol}. Syncing state to main dashboard...`, userId);
           
           // Try to locate detailed setup metrics if scanned previously
           const setup = scannedSetups.find(s => s.symbol === symbol);
 
-          activePosition = {
+          session.activePosition = {
             symbol,
             companyName: setup?.companyName || getCompanyName(symbol),
             qty,
@@ -2575,23 +2788,23 @@ export async function syncActivePositionWithLiveTrades(userId?: string) {
             avgVolume20d: setup?.avgVolume20d,
             rsiStatus: setup?.rsiStatus
           };
-          saveStateToDisk();
+          saveUserStateToDisk(userId);
         } else {
           // Live price updates
-          activePosition.currentPrice = currentPrice;
-          activePosition.currentValue = currentValue;
-          activePosition.unrealizedPl = unrealizedPl;
-          activePosition.unrealizedPlPct = unrealizedPlPct;
-          saveStateToDisk();
+          session.activePosition.currentPrice = currentPrice;
+          session.activePosition.currentValue = currentValue;
+          session.activePosition.unrealizedPl = unrealizedPl;
+          session.activePosition.unrealizedPlPct = unrealizedPlPct;
+          saveUserStateToDisk(userId);
         }
       } else {
         // If there are no open positions on Alpaca, but we have an activePosition stored in-memory, sync reset
-        if (activePosition) {
-          addLog("WARNING", `[SYNC ENGINE] Live Alpaca account has zero open positions, but we had in-memory position ${activePosition.symbol}. Fetching executed order details from Alpaca to calculate precise realized statistics...`);
+        if (session.activePosition) {
+          addLog("WARNING", `[SYNC ENGINE] Live Alpaca account has zero open positions, but we had in-memory position ${session.activePosition.symbol}. Fetching executed order details from Alpaca to calculate precise realized statistics...`, userId);
           
-          const symbolObj = activePosition.symbol;
-          let exitPrice = activePosition.currentPrice;
-          let qty = activePosition.qty;
+          const symbolObj = session.activePosition.symbol;
+          let exitPrice = session.activePosition.currentPrice;
+          let qty = session.activePosition.qty;
           let exitedAt = new Date().toISOString();
           let orderReason = "ALPACA_AUTOMATIC_CLOSE";
 
@@ -2623,40 +2836,40 @@ export async function syncActivePositionWithLiveTrades(userId?: string) {
           }
 
           // Fallback reason based on price zone relative to stop-loss support level or preserved reviewReason
-          if (activePosition.reviewReason) {
-            orderReason = activePosition.reviewReason;
+          if (session.activePosition.reviewReason) {
+            orderReason = session.activePosition.reviewReason;
           } else if (orderReason === "ALPACA_AUTOMATIC_CLOSE") {
-            if (exitPrice <= activePosition.supportLevel * 1.01) {
+            if (exitPrice <= session.activePosition.supportLevel * 1.01) {
               orderReason = "STOP_LOSS_REACHED";
-            } else if (activePosition.catalystDate && new Date().toISOString().split("T")[0] >= activePosition.catalystDate) {
+            } else if (session.activePosition.catalystDate && new Date().toISOString().split("T")[0] >= session.activePosition.catalystDate) {
               orderReason = "CATALYST_DAY_SELLING";
             }
           }
 
-          const realizedPl = qty * exitPrice - qty * activePosition.entryPrice;
-          const realizedPlPct = ((exitPrice - activePosition.entryPrice) / activePosition.entryPrice) * 100;
+          const realizedPl = qty * exitPrice - qty * session.activePosition.entryPrice;
+          const realizedPlPct = ((exitPrice - session.activePosition.entryPrice) / session.activePosition.entryPrice) * 100;
 
           // Prevent duplicate logs/inserts if this transaction was already recorded in closedTrades
-          const alreadyExists = closedTrades.some(t => t.symbol === symbolObj && Math.abs(t.exitPrice - exitPrice) < 0.001 && Math.abs(t.qty - qty) < 0.001);
+          const alreadyExists = session.closedTrades.some(t => t.symbol === symbolObj && Math.abs(t.exitPrice - exitPrice) < 0.001 && Math.abs(t.qty - qty) < 0.001);
           if (!alreadyExists) {
-            closedTrades.unshift({
+            session.closedTrades.unshift({
               id: Math.random().toString(36).substr(2, 9),
               symbol: symbolObj,
-              companyName: activePosition.companyName,
-              entryPrice: activePosition.entryPrice,
+              companyName: session.activePosition.companyName,
+              entryPrice: session.activePosition.entryPrice,
               exitPrice,
               qty,
               pl: realizedPl,
               plPct: realizedPlPct,
-              enteredAt: activePosition.enteredAt,
+              enteredAt: session.activePosition.enteredAt,
               exitedAt,
               exitReason: orderReason
             });
-            addLog("SUCCESS", `[SYNC ENGINE] Discovered closed position. Registered REALIZED status for ${symbolObj}: ${realizedPlPct.toFixed(2)}% ($${realizedPl.toFixed(2)}) using Alpaca execution stats.`);
+            addLog("SUCCESS", `[SYNC ENGINE] Discovered closed position. Registered REALIZED status for ${symbolObj}: ${realizedPlPct.toFixed(2)}% ($${realizedPl.toFixed(2)}) using Alpaca execution stats.`, userId);
           }
 
-          activePosition = null;
-          saveStateToDisk();
+          session.activePosition = null;
+          saveUserStateToDisk(userId);
         }
       }
     }
@@ -2706,31 +2919,33 @@ async function runContinuousBotCycle() {
 }
 
 // API Endpoints Getters & Setters
-export function getBotConfig() {
-  if (process.env.GEMINI_API_KEY && (!botConfig.GEMINI_API_KEY || botConfig.GEMINI_API_KEY === "MY_GEMINI_API_KEY")) {
-    botConfig.GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+export function getBotConfig(userId?: string) {
+  const session = getUserSession(userId);
+  if (process.env.GEMINI_API_KEY && (!session.botConfig.GEMINI_API_KEY || session.botConfig.GEMINI_API_KEY === "MY_GEMINI_API_KEY")) {
+    session.botConfig.GEMINI_API_KEY = process.env.GEMINI_API_KEY;
   }
-  return botConfig;
+  return session.botConfig;
 }
 export async function updateBotConfig(newConfig: Partial<BotConfig>, userId?: string) {
   lastLocalUpdateTime = Date.now();
-  const oldConnection = botConfig.isConnectionActive;
-  const oldRunning = botConfig.isBotRunning;
+  const session = getUserSession(userId);
+  const oldConnection = session.botConfig.isConnectionActive;
+  const oldRunning = session.botConfig.isBotRunning;
 
-  botConfig = { ...botConfig, ...newConfig };
+  session.botConfig = { ...session.botConfig, ...newConfig };
 
-  if (newConfig.isConnectionActive !== undefined && oldConnection !== botConfig.isConnectionActive) {
+  if (newConfig.isConnectionActive !== undefined && oldConnection !== session.botConfig.isConnectionActive) {
     let isRobinhood = false;
     if (userId) {
       const creds = await resolveCredentialsForUser(userId);
       isRobinhood = creds?.brokerType === "ROBINHOOD";
     }
 
-    if (botConfig.isConnectionActive) {
+    if (session.botConfig.isConnectionActive) {
       if (isRobinhood) {
-        addLog("SUCCESS", "[CONNECTION ENGINE] Robinhood Agentic MCP channels connected.");
+        addLog("SUCCESS", "[CONNECTION ENGINE] Robinhood Agentic MCP channels connected.", userId);
       } else {
-        addLog("SUCCESS", "[CONNECTION ENGINE] Alpaca REST & Data integration channels connected.");
+        addLog("SUCCESS", "[CONNECTION ENGINE] Alpaca REST & Data integration channels connected.", userId);
       }
 
       // Check if there's an open trade right after connecting
@@ -2742,42 +2957,97 @@ export async function updateBotConfig(newConfig: Partial<BotConfig>, userId?: st
         }
       }
 
-      if (activePosition) {
-        if (!botConfig.isBotRunning) {
-          botConfig.isBotRunning = true;
-          addLog("SUCCESS", `[TRADING ENGINE] Detected open trade in ${activePosition.symbol} after connecting. Automatically started the trading bot!`);
+      if (session.activePosition) {
+        if (!session.botConfig.isBotRunning) {
+          session.botConfig.isBotRunning = true;
+          addLog("SUCCESS", `[TRADING ENGINE] Detected open trade in ${session.activePosition.symbol} after connecting. Automatically started the trading bot!`, userId);
         }
       }
     } else {
       if (isRobinhood) {
-        addLog("WARNING", "[CONNECTION ENGINE] Robinhood integration disconnected. Bot on standby.");
+        addLog("WARNING", "[CONNECTION ENGINE] Robinhood integration disconnected. Bot on standby.", userId);
       } else {
-        addLog("WARNING", "[CONNECTION ENGINE] Alpaca integration disconnected. Bot on standby.");
+        addLog("WARNING", "[CONNECTION ENGINE] Alpaca integration disconnected. Bot on standby.", userId);
       }
     }
   }
 
-  if (newConfig.isBotRunning !== undefined && oldRunning !== botConfig.isBotRunning) {
-    if (botConfig.isBotRunning) {
-      addLog("SUCCESS", "[TRADING ENGINE] Autonomous swing trading scheduler activated.");
+  if (newConfig.isBotRunning !== undefined && oldRunning !== session.botConfig.isBotRunning) {
+    if (session.botConfig.isBotRunning) {
+      addLog("SUCCESS", "[TRADING ENGINE] Autonomous swing trading scheduler activated.", userId);
     } else {
-      addLog("WARNING", "[TRADING ENGINE] Autonomous swing trading scheduler paused.");
+      addLog("WARNING", "[TRADING ENGINE] Autonomous swing trading scheduler paused.", userId);
     }
   } else if (newConfig.isConnectionActive === undefined && newConfig.isBotRunning === undefined) {
-    addLog("INFO", `Configuration updated on server. Running on ${botConfig.isPaper ? "PAPER" : "LIVE"} credentials.`);
+    addLog("INFO", `Configuration updated on server. Running on ${session.botConfig.isPaper ? "PAPER" : "LIVE"} credentials.`, userId);
   }
 
-  saveStateToDisk();
+  saveUserStateToDisk(userId);
 }
-export function getActivePosition() { return activePosition; }
-export function getClosedTrades() { return closedTrades; }
-export function getBotLogs() { return botLogs; }
-export function getScannedSetups() { return scannedSetups; }
-export function getBotState() { return botState; }
-export function clearLogs() {
-  botLogs = [];
-  addLog("INFO", "System activity terminal cleared.");
-  saveStateToDisk();
+export function getActivePosition(userId?: string) { 
+  return getUserSession(userId).activePosition; 
+}
+export function getClosedTrades(userId?: string) { 
+  return getUserSession(userId).closedTrades; 
+}
+export function getBotLogs(userId?: string) { 
+  return getUserSession(userId).botLogs; 
+}
+export async function getScannedSetups(): Promise<StockSetup[]> {
+  try {
+    const db = getDb();
+    if (db && typeof db.collection === "function") {
+      const snap = await db.collection("globalState").doc("trading").get();
+      if (snap.exists) {
+        const parsed = snap.data();
+        if (parsed && Array.isArray(parsed.scannedSetups)) {
+          scannedSetups = parsed.scannedSetups;
+          return parsed.scannedSetups;
+        }
+      }
+    }
+  } catch (err: any) {
+    if (isFirestoreDatabaseError(err)) {
+      switchToDefaultDatabase();
+      try {
+        const db = getDb();
+        if (db && typeof db.collection === "function") {
+          const snap = await db.collection("globalState").doc("trading").get();
+          if (snap.exists) {
+            const parsed = snap.data();
+            if (parsed && Array.isArray(parsed.scannedSetups)) {
+              scannedSetups = parsed.scannedSetups;
+              return parsed.scannedSetups;
+            }
+          }
+        }
+      } catch (retryErr: any) {
+        console.info("[DATABASE SETUP FETCH] Tried falling back to default Firestore database but failed. Returning local cache setups.");
+      }
+    } else {
+      console.warn("[DATABASE SETUP FETCH] Failed to load setups from Firestore, returning local memory cached setups:", err.message);
+    }
+  }
+  return scannedSetups;
+}
+export function getBotState(userId?: string) {
+  const session = getUserSession(userId);
+  return {
+    ...session.botState,
+    isMarketOpen: botState.isMarketOpen,
+    lastScanTime: botState.lastScanTime,
+    nextScanTime: botState.nextScanTime,
+    marketRegime: botState.marketRegime,
+    spySma50: botState.spySma50,
+    spySma200: botState.spySma200,
+    spyPrice: botState.spyPrice,
+  };
+}
+export function clearLogs(userId?: string) {
+  const session = getUserSession(userId);
+  session.botLogs = [];
+  addLog("INFO", "System activity terminal cleared.", userId);
+  saveUserStateToDisk(userId);
 }
 
 export async function generateAIOfferings(userId?: string): Promise<string[]> {

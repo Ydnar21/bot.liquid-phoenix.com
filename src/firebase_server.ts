@@ -42,8 +42,21 @@ function getDbInstance(app: admin.app.App, dbIdInput?: string) {
 
 let adminDb: admin.firestore.Firestore;
 
+let isUsingDefaultDb = false;
+
 export function switchToDefaultDatabase() {
-  console.log("Database fallback check triggered, keeping the configured custom database: ", firebaseConfig.firestoreDatabaseId);
+  if (isUsingDefaultDb) return;
+  console.log("Database fallback check triggered, switching to standard default Firestore database.");
+  try {
+    const app = admin.apps[0];
+    if (app) {
+      adminDb = getFirestore(app); // Returns standard default database
+      isUsingDefaultDb = true;
+      console.log("Firebase Admin successfully switched to standard default database.");
+    }
+  } catch (err: any) {
+    console.error("Failed to switch Firebase Admin to default database:", err.message);
+  }
 }
 
 try {

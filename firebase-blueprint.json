@@ -87,6 +87,39 @@
       },
       "required": ["updatedAt"]
     },
+    "userTradingState": {
+      "title": "User Trading State",
+      "description": "Persisted individual user account portfolio trading status",
+      "type": "object",
+      "properties": {
+        "activePosition": {
+          "type": "object",
+          "description": "User specific open swing trade, if any"
+        },
+        "closedTrades": {
+          "type": "array",
+          "description": "User specific audited historic trade records"
+        },
+        "botConfig": {
+          "type": "object",
+          "description": "User specific custom scanning and active trader settings"
+        },
+        "botState": {
+          "type": "object",
+          "description": "User specific live metrics"
+        },
+        "botLogs": {
+          "type": "array",
+          "description": "User specific execution log stream"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Database save timestamp"
+        }
+      },
+      "required": ["updatedAt"]
+    },
     "terminalWorkspace": {
       "title": "Terminal Workspace",
       "description": "User's sandboxed virtual filesystem workspace",
@@ -108,6 +141,10 @@
     "users/{userId}/private/credentials": {
       "schema": "userCredentials",
       "description": "Isolated private credentials"
+    },
+    "users/{userId}/private/state": {
+      "schema": "userTradingState",
+      "description": "Isolated private trading state configuration for individual users"
     },
     "users/{userId}/terminal_v1/filesystem": {
       "schema": "terminalWorkspace",

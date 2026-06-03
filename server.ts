@@ -56,7 +56,8 @@ async function startServer() {
 
   // API 1: Fetch config (Obfuscating secrets to client)
   app.get("/api/config", (req, res) => {
-    const config = getBotConfig();
+    const userId = req.query.userId as string | undefined;
+    const config = getBotConfig(userId);
     const cleanConfig = {
       ...config,
       ALPACA_API_KEY: config.ALPACA_API_KEY
@@ -75,9 +76,9 @@ async function startServer() {
 
   // API 2: Update configuration
   app.post("/api/config", async (req, res) => {
-    const prevRunning = getBotConfig().isBotRunning;
+    const userId = (req.query.userId || req.body?.userId) as string | undefined;
+    const prevRunning = getBotConfig(userId).isBotRunning;
     const body = req.body || {};
-    const userId = req.query.userId as string | undefined;
 
     // Do not overwrite obfuscated keys with stars
     const updatePayload: Record<string, any> = {};
@@ -93,11 +94,11 @@ async function startServer() {
     await updateBotConfig(updatePayload, userId);
 
     // If bot state toggled, restart cron schedules
-    if (prevRunning !== getBotConfig().isBotRunning) {
+    if (prevRunning !== getBotConfig(userId).isBotRunning) {
       restartCronEngine();
     }
 
-    res.json({ success: true, config: getBotConfig() });
+    res.json({ success: true, config: getBotConfig(userId) });
   });
 
   // API 2.5: Securely save user credentials locally as a backup fallback
@@ -148,31 +149,40 @@ async function startServer() {
 
   // API 3: Get current state metadata
   app.get("/api/state", (req, res) => {
-    res.json(getBotState());
+    const userId = req.query.userId as string | undefined;
+    res.json(getBotState(userId));
   });
 
   // API 4: Get active position (forces live synchronization first)
   app.get("/api/position", async (req, res) => {
-    const userId = req.query.userId as string;
+    const userId = req.query.userId as string | undefined;
     if (userId) {
       await syncActivePositionWithLiveTrades(userId);
     }
-    res.json(getActivePosition());
+    res.json(getActivePosition(userId));
   });
 
   // API 5: History logs
   app.get("/api/history", (req, res) => {
-    res.json(getClosedTrades());
+    const userId = req.query.userId as string | undefined;
+    res.json(getClosedTrades(userId));
   });
 
   // API 6: Scanned setups
-  app.get("/api/setups", (req, res) => {
-    res.json(getScannedSetups());
+  app.get("/api/setups", async (req, res) => {
+    try {
+      const setups = await getScannedSetups();
+      res.json(setups);
+    } catch (err: any) {
+      console.error("Failed to load scanned setups:", err.message);
+      res.json([]);
+    }
   });
 
   // API 7: Fetch bot log lines
   app.get("/api/logs", (req, res) => {
-    res.json(getBotLogs());
+    const userId = req.query.userId as string | undefined;
+    res.json(getBotLogs(userId));
   });
 
   // API 8: Manually trigger setup screening scanner
@@ -185,26 +195,29 @@ async function startServer() {
   // API 9: Deploy portfolio (Buy custom symbol)
   app.post("/api/deploy", async (req, res) => {
     const { symbol } = req.body || {};
+    const userId = (req.query.userId || req.body?.userId) as string | undefined;
     if (!symbol) {
       return res.status(400).json({ error: "Missing sym payload parameter." });
     }
-    const result = await deployPortfolio(symbol);
+    const result = await deployPortfolio(symbol, userId);
     res.json({ success: result });
   });
 
   // API 10: Exit active position (Sell symbol)
   app.post("/api/exit", async (req, res) => {
     const { symbol, reason } = req.body || {};
+    const userId = (req.query.userId || req.body?.userId) as string | undefined;
     if (!symbol) {
       return res.status(400).json({ error: "Missing sym parameter." });
     }
-    const result = await executeExit(symbol, reason || "MANUAL_DASHBOARD_CLICK");
+    const result = await executeExit(symbol, reason || "MANUAL_DASHBOARD_CLICK", userId);
     res.json({ success: result });
   });
 
   // API 11: Clear bot log file
   app.post("/api/clear-logs", (req, res) => {
-    clearLogs();
+    const userId = (req.query.userId || req.body?.userId) as string | undefined;
+    clearLogs(userId);
     res.json({ success: true });
   });
 

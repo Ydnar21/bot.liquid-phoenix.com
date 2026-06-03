@@ -125,6 +125,7 @@ export interface BotState {
   fomcBlackout: boolean;
   fomcDetails?: string;
   isMarketOpen?: boolean;
+  isScanning?: boolean;
   storedEvents?: StoredEvent[];
 }
 

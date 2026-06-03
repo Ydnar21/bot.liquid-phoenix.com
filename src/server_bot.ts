@@ -647,7 +647,16 @@ export async function getAllUserCredentials(): Promise<UserCredentials[]> {
       });
     }
   } catch (error: any) {
-    if (error.message.includes("PERMISSION_DENIED") || error.message.includes("permission_denied") || error.message.includes("permissions")) {
+    const errMsg = error?.message || "";
+    if (
+      errMsg.includes("PERMISSION_DENIED") ||
+      errMsg.includes("permission_denied") ||
+      errMsg.includes("permissions") ||
+      errMsg.includes("NOT_FOUND") ||
+      errMsg.includes("not_found") ||
+      errMsg.includes("not-found") ||
+      errMsg.includes("5 ")
+    ) {
       // Quietly fall back to retrieving users individually since collection group queries require administrative index or specific IAM permissions
       try {
         const db = getDb();
@@ -660,19 +669,19 @@ export async function getAllUserCredentials(): Promise<UserCredentials[]> {
               const data = credsDoc.data();
               if (data && (data.ALPACA_API_KEY || data.ROBINHOOD_MCP_URL || data.brokerType === "ROBINHOOD")) {
                 credentialsList.push({
-                  userId,
-                  brokerType: data.brokerType || "ALPACA",
-                  ALPACA_API_KEY: data.ALPACA_API_KEY,
-                  ALPACA_SECRET_KEY: data.ALPACA_SECRET_KEY,
-                  ALPACA_BASE_URL: data.ALPACA_BASE_URL || "https://paper-api.alpaca.markets",
-                  ROBINHOOD_API_KEY: data.ROBINHOOD_API_KEY,
-                  ROBINHOOD_PRIVATE_KEY: data.ROBINHOOD_PRIVATE_KEY,
-                  ROBINHOOD_ACCOUNT_NUMBER: data.ROBINHOOD_ACCOUNT_NUMBER,
-                  ROBINHOOD_MCP_URL: data.ROBINHOOD_MCP_URL || "https://agent.robinhood.com/mcp/trading",
-                  GEMINI_API_KEY: data.GEMINI_API_KEY,
-                  CLAUDE_API_KEY: data.CLAUDE_API_KEY,
-                  OPENAI_API_KEY: data.OPENAI_API_KEY,
-                  ROBINHOOD_LLM_PROVIDER: data.ROBINHOOD_LLM_PROVIDER || "GEMINI",
+                   userId,
+                   brokerType: data.brokerType || "ALPACA",
+                   ALPACA_API_KEY: data.ALPACA_API_KEY,
+                   ALPACA_SECRET_KEY: data.ALPACA_SECRET_KEY,
+                   ALPACA_BASE_URL: data.ALPACA_BASE_URL || "https://paper-api.alpaca.markets",
+                   ROBINHOOD_API_KEY: data.ROBINHOOD_API_KEY,
+                   ROBINHOOD_PRIVATE_KEY: data.ROBINHOOD_PRIVATE_KEY,
+                   ROBINHOOD_ACCOUNT_NUMBER: data.ROBINHOOD_ACCOUNT_NUMBER,
+                   ROBINHOOD_MCP_URL: data.ROBINHOOD_MCP_URL || "https://agent.robinhood.com/mcp/trading",
+                   GEMINI_API_KEY: data.GEMINI_API_KEY,
+                   CLAUDE_API_KEY: data.CLAUDE_API_KEY,
+                   OPENAI_API_KEY: data.OPENAI_API_KEY,
+                   ROBINHOOD_LLM_PROVIDER: data.ROBINHOOD_LLM_PROVIDER || "GEMINI",
                 });
               }
             }
@@ -682,7 +691,7 @@ export async function getAllUserCredentials(): Promise<UserCredentials[]> {
         console.info("User credentials fallback query also bypassed (using local file persistence):", fallbackError.message);
       }
     } else {
-      console.warn("Failed to query user credentials CollectionGroup (this is expected if running unauthenticated locally):", error.message);
+      console.info("Failed to query user credentials CollectionGroup (this is expected if running unauthenticated locally or database bootstrapping has not completed):", error.message);
     }
   }
 
@@ -729,12 +738,30 @@ export async function getAllUserCredentials(): Promise<UserCredentials[]> {
   return credentialsList;
 }
 
+// Memory cache for user credentials to avoid repeated Firestore/disk references unless needed
+export const loadedCredentialsCache = new Map<string, UserCredentials>();
+
+export function invalidateCredentialsCache(userId: string) {
+  loadedCredentialsCache.delete(userId);
+}
+
 // User-specific or Fallback credentials resolver
 export async function ensureUserCredentialsLoaded(userId: string): Promise<void> {
   if (!userId) return;
+
+  const session = getUserSession(userId);
+  const hasCredentialsInMemory = 
+    (session.botConfig.ALPACA_API_KEY && session.botConfig.ALPACA_SECRET_KEY) ||
+    session.botConfig.isConnectionActive;
+
+  if (hasCredentialsInMemory && loadedCredentialsCache.has(userId)) {
+    // Already loaded in memory cache, bypass database reference!
+    return;
+  }
+
   const creds = await resolveCredentialsForUser(userId);
   if (creds) {
-    const session = getUserSession(userId);
+    loadedCredentialsCache.set(userId, creds);
     let changed = false;
     if (creds.brokerType === "ROBINHOOD") {
       // Clear out Alpaca variables to prevent overlap
@@ -785,6 +812,11 @@ export async function ensureUserCredentialsLoaded(userId: string): Promise<void>
 // User-specific or Fallback credentials resolver
 export async function resolveCredentialsForUser(userId?: string): Promise<UserCredentials | null> {
   if (userId) {
+    const cached = loadedCredentialsCache.get(userId);
+    if (cached) {
+      return cached;
+    }
+
     // 1. Try local offline fallback backup file
     const fallbackPath = `./private_creds_${userId}.json`;
     if (fs.existsSync(fallbackPath)) {
@@ -792,7 +824,7 @@ export async function resolveCredentialsForUser(userId?: string): Promise<UserCr
         const raw = fs.readFileSync(fallbackPath, "utf-8");
         const parsed = JSON.parse(raw);
         if (parsed && (parsed.ALPACA_API_KEY || parsed.ROBINHOOD_MCP_URL || parsed.brokerType === "ROBINHOOD")) {
-          return {
+          const credsObj: UserCredentials = {
             userId,
             brokerType: parsed.brokerType || "ALPACA",
             ALPACA_API_KEY: parsed.ALPACA_API_KEY,
@@ -807,6 +839,8 @@ export async function resolveCredentialsForUser(userId?: string): Promise<UserCr
             OPENAI_API_KEY: parsed.OPENAI_API_KEY,
             ROBINHOOD_LLM_PROVIDER: parsed.ROBINHOOD_LLM_PROVIDER || "GEMINI",
           };
+          loadedCredentialsCache.set(userId, credsObj);
+          return credsObj;
         }
       } catch (e: any) {
         console.warn(`resolveCredentialsForUser local backup read error: ${e.message}`);
@@ -821,7 +855,7 @@ export async function resolveCredentialsForUser(userId?: string): Promise<UserCr
         if (snap.exists) {
           const data = snap.data();
           if (data && (data.ALPACA_API_KEY || data.ROBINHOOD_MCP_URL || data.brokerType === "ROBINHOOD")) {
-            return {
+            const credsObj: UserCredentials = {
               userId,
               brokerType: data.brokerType || "ALPACA",
               ALPACA_API_KEY: data.ALPACA_API_KEY,
@@ -836,16 +870,27 @@ export async function resolveCredentialsForUser(userId?: string): Promise<UserCr
               OPENAI_API_KEY: data.OPENAI_API_KEY,
               ROBINHOOD_LLM_PROVIDER: data.ROBINHOOD_LLM_PROVIDER || "GEMINI",
             };
+            loadedCredentialsCache.set(userId, credsObj);
+            return credsObj;
           }
         }
       }
     } catch (e: any) {
       const msg = e?.message || "";
-      if (msg.includes("PERMISSION_DENIED") || msg.includes("Missing or insufficient permissions") || msg.includes("Error 7") || msg.includes("7 PERMISSION_DENIED")) {
+      if (
+        msg.includes("PERMISSION_DENIED") ||
+        msg.includes("Missing or insufficient permissions") ||
+        msg.includes("Error 7") ||
+        msg.includes("7 PERMISSION_DENIED") ||
+        msg.includes("NOT_FOUND") ||
+        msg.includes("not_found") ||
+        msg.includes("not-found") ||
+        msg.includes("5 ")
+      ) {
         // Silent lookup fallback block
-        console.info(`[Firebase Server] Direct lookup bypassed for user ${userId} (relying on secure authenticated client-side sync).`);
+        console.info(`[Firebase Server] Direct credentials lookup safely bypassed/not found for user ${userId} (relying on local/client-side backups).`);
       } else {
-        console.warn(`resolveCredentialsForUser Firestore lookup error: ${e.message}`);
+        console.info(`resolveCredentialsForUser Firestore lookup error (safely carrying on): ${e.message}`);
       }
     }
   }
@@ -854,7 +899,10 @@ export async function resolveCredentialsForUser(userId?: string): Promise<UserCr
   const users = await getAllUserCredentials();
   if (users.length > 0 && userId) {
     const match = users.find((u) => u.userId === userId);
-    if (match) return match;
+    if (match) {
+      loadedCredentialsCache.set(userId, match);
+      return match;
+    }
   }
 
   // 4. Default to master bot settings
@@ -1701,6 +1749,8 @@ async function checkFOMCBlackout() {
 export async function scanForSetups(userId?: string) {
   addLog("INFO", "Initiating scan for high-quality setups across S&P 500 & Nasdaq 100 constituents...", userId);
   // Proposals stay and remain persistent across accounts until the new scan completes successfully.
+  botState.isScanning = true;
+  scannedSetups = [];
   saveStateToDisk();
 
   try {
@@ -1979,6 +2029,19 @@ export async function scanForSetups(userId?: string) {
           completion.reason = `Catalyst Pullback: Price above 200 SMA with a pullback of more than 5% and upcoming ${completion.catalystEvent} on ${completion.catalystDate}.`;
         }
         evaluatedSetups.push(completion);
+
+        // Dynamically sorted progressive list addition so items appear on-screen instantly
+        scannedSetups = [...evaluatedSetups].sort((a, b) => {
+          const aBlocked = a.blockersFound.length > 0 ? 1 : 0;
+          const bBlocked = b.blockersFound.length > 0 ? 1 : 0;
+          if (aBlocked !== bBlocked) return aBlocked - bBlocked;
+          const sentryDiff = b.sentimentScore - a.sentimentScore;
+          if (Math.abs(sentryDiff) > 0.01) {
+            return sentryDiff;
+          }
+          return b.relativeStrengthRatio - a.relativeStrengthRatio;
+        });
+        saveStateToDisk();
       } else {
         // Excluded from standard catalyst radar window
         failedNoCatalystCount++;
@@ -2017,6 +2080,7 @@ export async function scanForSetups(userId?: string) {
     addLog("SUCCESS", `Screener scan completed! Found ${scannedSetups.length} setup proposals.`, userId);
     botState.lastScanTime = new Date().toISOString();
     botState.nextScanTime = new Date(Date.now() + botConfig.scanIntervalMinutes * 60 * 1000).toISOString();
+    botState.isScanning = false;
     saveStateToDisk();
 
     // 3. Autonomous Trade Trigger Action:
@@ -2046,6 +2110,8 @@ export async function scanForSetups(userId?: string) {
 
   } catch (err: any) {
     addLog("ERROR", `Continuous scanning routine crashed: ${err.message}`);
+    botState.isScanning = false;
+    saveStateToDisk();
   }
 }
 

@@ -281,6 +281,14 @@ export default function App() {
       setSetups(setupsRes);
       setLogs(logsRes);
       setAlpacaAccount(accountRes);
+      if (stateRes && stateRes.isScanning !== undefined) {
+        setIsScanning((prev) => {
+          if (prev && !stateRes.isScanning) {
+            triggerBanner(`Screener scan completed! Found ${setupsRes.length} setup proposals.`, "success");
+          }
+          return stateRes.isScanning;
+        });
+      }
     } catch (err: any) {
       const errMsg = (err instanceof Error ? err.message : String(err)) || "";
       const lowerMsg = errMsg.toLowerCase();
@@ -314,13 +322,14 @@ export default function App() {
   useEffect(() => {
     if (user) {
       fetchAllStates();
-      // Poll updates every 10 seconds to render logs, real-time prices & executions
+      // Dynamic interval: poll faster (every 3s) during scan to stream setups in real-time
+      const intervalMs = isScanning ? 3000 : 10000;
       const interval = setInterval(() => {
         fetchAllStates();
-      }, 10000);
+      }, intervalMs);
       return () => clearInterval(interval);
     }
-  }, [user]);
+  }, [user, isScanning]);
 
   const handleSaveConfig = async (updated: Partial<BotConfig>) => {
     // Optimistic client-side state updates for instant visual confirmation
@@ -416,20 +425,19 @@ export default function App() {
 
   const handleTriggerScan = async () => {
     setIsScanning(true);
-    triggerBanner("Starting stock universe scanner across S&P 500 + Nasdaq 100...", "success");
+    triggerBanner("Starting stock universe scanner across S&P 500 + Nasdaq 100 in the background...", "success");
     const uid = auth.currentUser?.uid || "";
 
     try {
-      const res = await fetch(`/api/scan?userId=${uid}`, { method: "POST" });
-      const data = await res.json();
-      if (data.success) {
-        // Await 3 seconds while server starts scan, then pull initial list
-        setTimeout(async () => {
-          await fetchAllStates();
-          setIsScanning(false);
-          triggerBanner("Scanning loop completed! Check setups dashboard below.", "success");
-        }, 4000);
-      }
+       const res = await fetch(`/api/scan?userId=${uid}`, { method: "POST" });
+       const data = await res.json();
+       if (data.success) {
+         // Immediate fetch to start faster real-time polling updates
+         await fetchAllStates();
+       } else {
+         setIsScanning(false);
+         triggerBanner("Failed to initialize background scanner on server.", "error");
+       }
     } catch (err: any) {
       triggerBanner(`Scan triggers failed: ${err.message}`, "error");
       setIsScanning(false);

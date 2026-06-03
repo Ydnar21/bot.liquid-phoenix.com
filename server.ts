@@ -25,6 +25,7 @@ import {
   registerAndVerifyUsername,
   getRegisteredUsername,
   getLeaderboardRankings,
+  invalidateCredentialsCache,
 } from "./src/server_bot.js";
 
 async function startServer() {
@@ -139,6 +140,7 @@ async function startServer() {
         updatedAt: new Date().toISOString()
       };
       fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), "utf-8");
+      invalidateCredentialsCache(userId);
       addLog("SUCCESS", `[CONNECTION ENGINE] Secure offline-credentials backup registered for user ${userId} using ${payload.brokerType} mode.`);
       res.json({ success: true });
     } catch (err: any) {

@@ -32,7 +32,9 @@ service cloud.firestore {
     function isValidUser(data) {
       return data.uid is string && data.uid == request.auth.uid
         && data.email is string && data.email.size() <= 256
-        && data.displayName is string && data.displayName.size() <= 256;
+        && data.displayName is string && data.displayName.size() <= 256
+        && (!data.keys().hasAny(['consentedToTerms']) || data.consentedToTerms is bool)
+        && (!data.keys().hasAny(['consentedAt']) || (data.consentedAt is string && data.consentedAt.size() <= 128));
     }
 
     function isValidCredentials(data) {

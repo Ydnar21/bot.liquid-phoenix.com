@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
+import { getAuth, GoogleAuthProvider, OAuthProvider, signInWithPopup, signOut } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 // @ts-ignore
 import firebaseConfig from "../firebase-applet-config.json";
@@ -11,6 +11,7 @@ const dbId = (!firebaseConfig.firestoreDatabaseId || firebaseConfig.firestoreDat
 export let db = dbId ? getFirestore(app, dbId) : getFirestore(app);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
+export const appleProvider = new OAuthProvider("apple.com");
 
 export function switchToDefaultClientDb() {
   console.log("Client database fallback check triggered, keeping configured database: ", firebaseConfig.firestoreDatabaseId);

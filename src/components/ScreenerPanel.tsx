@@ -90,6 +90,28 @@ export default function ScreenerPanel({
                         }`}>
                           RSI: {setup.rsi} ({setup.rsiStatus || "NEUTRAL"})
                         </span>
+                        {setup.weeklyTrendStatus && (
+                          <span className={`text-[9px] px-1.5 py-0.5 rounded font-mono font-bold border ${
+                            setup.weeklyTrendStatus === "BULLISH"
+                              ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+                              : setup.weeklyTrendStatus === "BEARISH"
+                              ? "bg-rose-500/10 border-rose-500/20 text-rose-400"
+                              : "bg-gray-500/10 border-gray-500/20 text-gray-400"
+                          }`}>
+                            Weekly Trend: {setup.weeklyTrendStatus}
+                          </span>
+                        )}
+                        {setup.dailyTrendStructure && (
+                          <span className={`text-[9px] px-1.5 py-0.5 rounded font-mono border ${
+                            setup.dailyTrendStructure === "PROGRESSIVE"
+                              ? "bg-blue-500/10 border-blue-500/20 text-blue-400 font-bold"
+                              : setup.dailyTrendStructure === "CONSOLIDATING"
+                              ? "bg-amber-500/10 border-amber-500/20 text-amber-400"
+                              : "bg-rose-500/10 border-rose-500/20 text-rose-400"
+                          }`}>
+                            Daily Chart: {setup.dailyTrendStructure}
+                          </span>
+                        )}
                         {setup.isEMA20Pullback && (
                           <span className="text-[9px] bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 px-1.5 py-0.5 rounded font-mono font-bold animate-pulse">
                             20 EMA Dip-Buy: ${setup.ema20Price}
@@ -179,7 +201,13 @@ export default function ScreenerPanel({
                       </div>
                       <div className="bg-theme-input p-2.5 rounded border border-theme-border space-y-0.5">
                         <span className="text-[9px] text-gray-500 block uppercase font-bold font-sans">Trend Mode</span>
-                        <span className="font-bold text-emerald-400">Bullish Stacked</span>
+                        <span className="font-bold text-emerald-400">
+                          {setup.weeklyTrendStatus === "BULLISH" && setup.dailyTrendStructure === "PROGRESSIVE" 
+                            ? "MTF Progressive" 
+                            : setup.weeklyTrendStatus === "BULLISH" 
+                            ? "MTF Confirmed" 
+                            : "Standard Stacked"}
+                        </span>
                       </div>
                     </div>
 

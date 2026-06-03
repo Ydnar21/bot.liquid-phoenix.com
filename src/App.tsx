@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Cpu, Terminal, RefreshCw, Layers, ShieldCheck, HeartHandshake, AlertCircle, Sparkles, X } from "lucide-react";
+import { Cpu, Terminal, RefreshCw, Layers, ShieldCheck, HeartHandshake, AlertCircle, Sparkles, X, TrendingUp, Activity, Compass, Lock, Scale, FileText, CheckCircle, ArrowUpRight } from "lucide-react";
 import { BotConfig, BotState, ActivePosition, ClosedTrade, BotLog, StockSetup } from "./types";
 import Header from "./components/Header";
 import Settings from "./components/Settings";
@@ -8,26 +8,29 @@ import ActivePositionPanel from "./components/ActivePositionPanel";
 import ScreenerPanel from "./components/ScreenerPanel";
 import LogsConsole from "./components/LogsConsole";
 import PerformanceHistory from "./components/PerformanceHistory";
-import SimulatedTerminal from "./components/SimulatedTerminal";
 import UsernameModal from "./components/UsernameModal";
 import LeaderboardPanel from "./components/LeaderboardPanel";
-import { auth, googleProvider, signInWithPopup, signOut, db, switchToDefaultClientDb } from "./firebase";
+import FuturisticStockChart from "./components/FuturisticStockChart";
+import PythonSyncHub from "./components/PythonSyncHub";
+import { auth, googleProvider, appleProvider, signInWithPopup, signOut, db, switchToDefaultClientDb } from "./firebase";
 import { onAuthStateChanged, User, updateProfile } from "firebase/auth";
 import { doc, setDoc, getDoc } from "firebase/firestore";
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"dashboard" | "terminal" | "leaderboard">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "leaderboard" | "pythonSync">("dashboard");
   
   const [username, setUsername] = useState<string>("");
   const [showUsernameSetup, setShowUsernameSetup] = useState<boolean>(false);
 
   // User Consent Agreements for Financial Disclaimers & Liability Waiver
+  const [consentedToTerms, setConsentedToTerms] = useState<boolean | null>(null);
   const [consentedTerms, setConsentedTerms] = useState(false);
   const [consentedRisk, setConsentedRisk] = useState(false);
   const [showModal, setShowModal] = useState<"terms" | "privacy" | null>(null);
   const [showConsentError, setShowConsentError] = useState(false);
+  const [showLoginModal, setShowLoginModal] = useState(false);
 
   const [config, setConfig] = useState<BotConfig>({
     ALPACA_API_KEY: "",
@@ -81,11 +84,13 @@ export default function App() {
       if (u) {
         setUser(u);
         let existingUsername = "";
+        let consented = false;
         try {
           const userRef = doc(db, "users", u.uid);
           const snap = await getDoc(userRef);
           if (snap.exists()) {
             existingUsername = snap.data()?.username || "";
+            consented = snap.data()?.consentedToTerms === true;
           }
           
           await setDoc(userRef, {
@@ -104,6 +109,7 @@ export default function App() {
               const snap = await getDoc(userRef);
               if (snap.exists()) {
                 existingUsername = snap.data()?.username || "";
+                consented = snap.data()?.consentedToTerms === true;
               }
               await setDoc(userRef, {
                 uid: u.uid,
@@ -202,10 +208,22 @@ export default function App() {
             }
           }
         }
+
+        setConsentedToTerms(consented);
+        if (consented) {
+          setConsentedTerms(true);
+          setConsentedRisk(true);
+        } else {
+          setConsentedTerms(false);
+          setConsentedRisk(false);
+        }
       } else {
         setUser(null);
         setUsername("");
         setShowUsernameSetup(false);
+        setConsentedToTerms(null);
+        setConsentedTerms(false);
+        setConsentedRisk(false);
       }
       setAuthLoading(false);
     });
@@ -483,12 +501,12 @@ export default function App() {
     }
   };
 
-  if (authLoading) {
+  if (authLoading || (user && consentedToTerms === null)) {
     return (
       <div className="bg-theme-bg min-h-screen flex items-center justify-center border-[12px] border-theme-input">
         <div className="flex flex-col items-center gap-4 text-center">
           <RefreshCw className="w-8 h-8 text-theme-accent animate-spin" />
-          <div className="font-mono text-xs text-gray-400 uppercase tracking-widest">Verifying connection to security clusters...</div>
+          <div className="font-mono text-xs text-gray-400 uppercase tracking-widest animate-pulse">Establishing encrypted workspace alignment...</div>
         </div>
       </div>
     );
@@ -496,31 +514,381 @@ export default function App() {
 
   if (!user) {
     return (
-      <div className="bg-theme-bg min-h-screen flex items-center justify-center relative overflow-hidden border-[12px] border-theme-input px-4 sm:px-6 py-12 antialiased">
-        <div className="absolute inset-0 bg-[linear-gradient(to_right,#1f2937_1px,transparent_1px),linear-gradient(to_bottom,#1f2937_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] opacity-30" />
-        
-        <div className="max-w-md w-full relative z-10 my-auto">
-          <div className="bg-theme-panel border border-theme-border rounded-xl p-6 sm:p-8 lg:p-10 shadow-2xl space-y-6">
-            <div className="flex flex-col items-center gap-4 text-center">
-              <div className="w-16 h-16 bg-theme-accent/10 border border-theme-accent/20 rounded-2xl flex items-center justify-center text-theme-accent shadow-inner">
-                <Cpu className="w-8 h-8" />
+      <div className="bg-theme-bg min-h-screen relative overflow-hidden border-[12px] border-theme-input px-4 sm:px-6 lg:px-8 py-6 antialiased flex flex-col justify-between">
+        {/* Background Grid Accent */}
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,#1f2937_1px,transparent_1px),linear-gradient(to_bottom,#1f2937_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] opacity-20 pointer-events-none" />
+
+        {/* Top-Right Authorization Navigation Bar */}
+        <header className="relative z-20 flex justify-between items-center border-b border-theme-border/60 pb-4">
+          <div className="flex items-center gap-2.5">
+            <div className="w-10 h-10 bg-theme-accent/10 border border-theme-accent/20 rounded-xl flex items-center justify-center text-theme-accent shadow-inner">
+              <Cpu className="w-5 h-5 animate-pulse" />
+            </div>
+            <div>
+              <div className="text-sm font-black uppercase tracking-wider text-white font-mono flex items-center gap-2">
+                <span>Liquid Phoenix</span>
+                <span className="text-[9px] bg-theme-accent/15 border border-theme-accent/35 text-theme-accent px-1.5 py-0.5 rounded font-mono font-bold uppercase tracking-normal">
+                  S-A Sentry v3.2
+                </span>
               </div>
-              <div className="space-y-1">
-                <h1 className="text-xl font-bold tracking-tight uppercase text-white font-display">Liquid Phoenix Swing Trading Portal</h1>
-                <p className="text-[10px] text-theme-accent font-mono tracking-widest uppercase">Autonomous Copy Portfolio Sentry</p>
+              <p className="text-[10px] text-gray-500 font-sans tracking-wide">Autonomous Swing Copy-Portfolio Gateway</p>
+            </div>
+          </div>
+
+          <div className="hidden sm:flex items-center gap-4 text-[10px] font-mono uppercase text-gray-400">
+            <div className="flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded text-emerald-400 text-[9px] font-bold">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
+              </span>
+              <span>Grid Clusters Active</span>
+            </div>
+          </div>
+
+          {/* TOP RIGHT LOGIN BUTTON */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setShowLoginModal(true)}
+              className="bg-white hover:bg-gray-100 text-black px-4.5 py-2.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all duration-150 shadow-lg active:scale-97 flex items-center gap-2 cursor-pointer border border-transparent"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-rose-500 animate-spin-slow" />
+              <span>Sign In / Access</span>
+            </button>
+          </div>
+        </header>
+
+        {/* Main Landing & Dashboard Content Grid */}
+        <main className="relative z-10 max-w-7xl mx-auto w-full my-auto py-10 grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+          
+          {/* LEFT COLUMN: Hero Concept & Documentation */}
+          <div className="lg:col-span-7 space-y-8">
+            <div className="space-y-4">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-bold font-mono uppercase tracking-widest text-theme-accent bg-theme-accent/10 border border-theme-accent/20 shadow-sm">
+                <Activity className="w-3.5 h-3.5" /> High-Conformity Swing Execution
+              </span>
+              <h1 className="text-2xl sm:text-4xl font-extrabold tracking-tight uppercase leading-none max-w-2xl bg-gradient-to-r from-white via-gray-100 to-gray-500 bg-clip-text text-transparent font-display">
+                DECENTRALIZED INTELLIGENT SWING MECHANICS & CROSS-STUDIO AUTO-COPYING
+              </h1>
+              <p className="text-gray-400 text-xs sm:text-sm leading-relaxed max-w-xl font-sans">
+                A secure trading bot system. Scans premium leader indices, verifies multi-timeframe weekly (10/30 SMA) alignments, finds key supply & demand pullback zones, and replicates copy transactions safely across sandboxes with same-size metrics.
+              </p>
+            </div>
+
+            {/* Strategic Pipeline Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="bg-theme-panel border border-theme-border rounded-xl p-4 space-y-2">
+                <div className="w-8 h-8 bg-theme-accent/10 rounded-lg flex items-center justify-center text-theme-accent mb-2">
+                  <TrendingUp className="w-4 h-4" />
+                </div>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-white font-mono">1. Trend Filter</h3>
+                <p className="text-[10px] text-gray-500 leading-relaxed font-sans">
+                  Rigorous daily Close &gt; 20 EMA &gt; 50 EMA &gt; 200 SMA aligned with weekly close breakouts above longer-term 10 & 30 SMA bands.
+                </p>
+              </div>
+
+              <div className="bg-theme-panel border border-theme-border rounded-xl p-4 space-y-2">
+                <div className="w-8 h-8 bg-blue-500/10 rounded-lg flex items-center justify-center text-blue-400 mb-2">
+                  <Compass className="w-4 h-4" />
+                </div>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-white font-mono">2. Liquidity Zones</h3>
+                <p className="text-[10px] text-gray-500 leading-relaxed font-sans">
+                  Finds critical support structures, Fair Value Gaps, and structural candle-body gaps to pinpoint low-risk pullback entries.
+                </p>
+              </div>
+
+              <div className="bg-theme-panel border border-theme-border rounded-xl p-4 space-y-2">
+                <div className="w-8 h-8 bg-emerald-500/10 rounded-lg flex items-center justify-center text-emerald-400 mb-2">
+                  <Layers className="w-4 h-4" />
+                </div>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-white font-mono">3. Environment Mirror</h3>
+                <p className="text-[10px] text-gray-500 leading-relaxed font-sans">
+                  Instantly transmits buy/sell configurations directly route-to-route across multi-broker sandboxes using encrypted API nodes.
+                </p>
               </div>
             </div>
 
-            <p className="text-xs text-gray-400 text-center leading-relaxed font-sans font-medium">
-              A professional decentralized cloud trading terminal. Connect and execute same-size swing metrics across multiple secure portfolio environments automatically.
+            {/* CTA Prompt */}
+            <div className="flex flex-wrap gap-4 items-center pt-2">
+              <button
+                onClick={() => setShowLoginModal(true)}
+                className="bg-theme-accent hover:opacity-90 text-white px-6 py-3 rounded-lg text-xs font-bold uppercase tracking-wider transition-all shadow-lg flex items-center gap-2 cursor-pointer"
+              >
+                <span>Initialize Secure Connection</span>
+                <ArrowUpRight className="w-4 h-4" />
+              </button>
+              
+              <div className="flex flex-wrap gap-2.5">
+                <button
+                  onClick={() => setShowModal("terms")}
+                  className="text-xs text-gray-400 hover:text-rose-400 font-bold uppercase tracking-wider py-3 px-4 border border-theme-border hover:bg-theme-input rounded-lg transition-colors cursor-pointer"
+                >
+                  Terms of Service & Waiver
+                </button>
+                <button
+                  onClick={() => setShowModal("privacy")}
+                  className="text-xs text-gray-400 hover:text-theme-accent font-bold uppercase tracking-wider py-3 px-4 border border-theme-border hover:bg-theme-input rounded-lg transition-colors cursor-pointer"
+                >
+                  Privacy Directive
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* RIGHT COLUMN: Interactive Stock Market Simulation (Futuristic & Clean) */}
+          <div className="lg:col-span-5">
+            <FuturisticStockChart />
+          </div>
+        </main>
+
+        {/* Footer info brand block */}
+        <footer className="relative z-10 text-center text-[10px] text-gray-600 font-mono uppercase tracking-widest pt-4 border-t border-theme-border/40 flex flex-col sm:flex-row justify-between items-center gap-4">
+          <span>© 2026 Liquid Phoenix S-A Sentry Portal. All Sentry pipelines aligned with security protocols.</span>
+          <div className="flex gap-4 font-bold">
+            <button 
+              onClick={() => setShowModal("terms")}
+              className="hover:text-rose-400 transition-colors cursor-pointer underline decoration-dotted uppercase"
+            >
+              Terms of Service
+            </button>
+            <button 
+              onClick={() => setShowModal("privacy")}
+              className="hover:text-theme-accent transition-colors cursor-pointer underline decoration-dotted uppercase"
+            >
+              Privacy Policy
+            </button>
+          </div>
+        </footer>
+
+        {/* TOP-RIGHT POPUP LOGIN/SIGN UP OVERLAY MODAL */}
+        {showLoginModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4 animate-fade-in">
+            <div className="bg-theme-panel border border-theme-border rounded-xl shadow-2xl max-w-md w-full overflow-hidden animate-scale-up">
+              
+              <div className="flex justify-between items-center bg-theme-input p-4 border-b border-theme-border">
+                <div className="flex items-center gap-2">
+                  <Cpu className="w-4.5 h-4.5 text-theme-accent" />
+                  <h3 className="text-xs font-black uppercase tracking-wider font-mono text-white">
+                    Secure Sentry Gateway
+                  </h3>
+                </div>
+                <button 
+                  onClick={() => setShowLoginModal(false)}
+                  className="text-gray-400 hover:text-white transition-colors p-1 rounded-md hover:bg-white/5"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-5">
+                <div className="text-center space-y-1">
+                  <h4 className="text-sm font-bold text-white uppercase font-display">Authorize Trading Environment</h4>
+                  <p className="text-[10px] text-gray-400 leading-normal font-sans">
+                    Log in with your Google or Apple credentials to access the decentralized dashboard. Single Sign-On automatically aggregates your portfolios.
+                  </p>
+                </div>
+
+                {/* Secure Auth CTAs */}
+                <div className="space-y-2.5 pt-1">
+                  <button
+                    onClick={async () => {
+                      try {
+                        setShowLoginModal(false);
+                        await signInWithPopup(auth, googleProvider);
+                        triggerBanner("Identity authenticated with Google.", "success");
+                      } catch (err: any) {
+                        triggerBanner(`Oauth request failed: ${err.message}`, "error");
+                      }
+                    }}
+                    className="w-full transition-all duration-150 py-3 rounded-lg text-xs font-black uppercase tracking-wider flex items-center justify-center gap-3 cursor-pointer shadow-lg bg-white text-black hover:bg-gray-100"
+                  >
+                    <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                      <path
+                        fill="#EA4335"
+                        d="M12.24 10.285m0-1V14.4h6.887c-.275 1.565-1.88 4.6-6.887 4.6-4.33 0-7.859-3.58-7.859-8s3.53-8 7.859-8c2.46 0 4.105 1.025 5.047 1.926l3.243-3.12C18.425 2.05 15.635 1 12.24 1c-6.318 0-11.44 5.122-11.44 11.4s5.122 11.4 11.44 11.4c6.6 0 11-4.635 11-11.19 0-.75-.08-1.32-.18-1.885H12.24z"
+                      />
+                    </svg>
+                    <span>Authorize with Google</span>
+                  </button>
+
+                  <button
+                    onClick={async () => {
+                      try {
+                        setShowLoginModal(false);
+                        await signInWithPopup(auth, appleProvider);
+                        triggerBanner("Identity authenticated with Apple.", "success");
+                      } catch (err: any) {
+                        triggerBanner(`Oauth request failed: ${err.message}`, "error");
+                      }
+                    }}
+                    className="w-full transition-all duration-150 py-3 rounded-lg text-xs font-black uppercase tracking-wider flex items-center justify-center gap-3 cursor-pointer shadow-lg bg-neutral-900 border border-neutral-800 text-white hover:bg-black"
+                  >
+                    <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.54 9.103 1.51 12.06 1.004 1.45 2.188 3.07 3.755 3.01 1.524-.06 2.098-.98 3.94-.98 1.83 0 2.365.98 3.94.95 2.11-.03 2.535-1.46 3.535-2.9 1.155-1.68 1.63-3.3 1.653-3.385-.047-.02-3.19-1.216-3.22-4.797-.024-2.985 2.444-4.42 2.56-4.5-.02-.04-1.397-1.615-3.868-1.79-2.05-.152-3.264 1.04-3.96 1.04zm2.146-4.306c.925-1.127 1.545-2.69 1.375-4.25-1.34.053-2.964.89-3.924 2.01-.823.955-1.544 2.533-1.353 4.07 1.493.117 3.013-.733 3.902-1.83z" />
+                    </svg>
+                    <span>Authorize with Apple</span>
+                  </button>
+                </div>
+
+                <div className="p-3 bg-theme-input rounded-lg border border-theme-border/60 text-[9px] text-gray-500 font-sans leading-relaxed text-center">
+                  By using this secure login flow, you acknowledge that you have reviewed the permanent Legal Waiver disclosures on our main page. No plain-text access tokens are saved on remote networks.
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Premium Overlay Disclosures Modal */}
+        {showModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4 animate-fade-in">
+            <div className="bg-theme-panel border border-theme-border rounded-xl shadow-2xl max-w-lg w-full max-h-[85vh] flex flex-col overflow-hidden animate-scale-up">
+              <div className="flex justify-between items-center bg-theme-input p-4 border-b border-theme-border">
+                <h3 className="text-xs sm:text-sm font-bold uppercase tracking-wider font-mono text-white flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-theme-accent" />
+                  {showModal === "terms" ? "Terms of Service & Liability Waiver" : "S-A Sentry Privacy Directive"}
+                </h3>
+                <button 
+                  onClick={() => setShowModal(null)}
+                  className="text-gray-400 hover:text-white transition-colors p-1 rounded-md hover:bg-white/5"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              
+              <div className="p-6 overflow-y-auto font-sans text-xs text-gray-300 space-y-4 leading-relaxed custom-scrollbar bg-theme-panel">
+                {showModal === "terms" ? (
+                  <>
+                    <p className="text-rose-400 font-bold uppercase tracking-wider border-b border-rose-900/40 pb-2 flex items-center gap-1.5 font-mono text-[10px]">
+                      STRICT DISCLAIMER: NO FINANCIAL REMEDIES & COMPLETELY DISCLAIMED LIABILITY
+                    </p>
+                    <div className="space-y-4 text-gray-300">
+                      <div>
+                        <h4 className="font-bold text-white mb-1">1. Experimental Software Suite - Under No Circumstances Make Guarantees</h4>
+                        <p>
+                          This platform operates solely as a personalized automated testing and execution interface. Under no circumstances does this application guarantee profitable trading outcomes, positive capital returns, or specific portfolio results.
+                        </p>
+                      </div>
+                      
+                      <div className="bg-rose-500/10 border border-rose-500/20 p-3.5 rounded-lg text-rose-300 font-medium">
+                        <span className="font-bold uppercase text-[10px] block mb-1 font-mono text-white">Full Consent & Clear Affirmation:</span>
+                        You expressly declare and fully agree that you are <strong className="text-white underline">NOT trusting this software to make money for you</strong> with any level of certainty or probability. You understand that automated trading models are susceptible to massive drawdowns, technical failures, and rapid loss of capital.
+                      </div>
+
+                      <div>
+                        <h4 className="font-bold text-white mb-1">2. Absolute Absence of Liability for "Bad Trades"</h4>
+                        <p>
+                          The developers, hosts, authors, and operators of this software are entirely held harmless from your trading outcomes. We hold zero liability for "bad trades", technical execution bugs, unexpected software crashes, API response latencies, market slippage, broker errors, incorrect data feeds, or manual execution errors.
+                        </p>
+                      </div>
+
+                      <div>
+                        <h4 className="font-bold text-white mb-1">3. Speculative Financial Jeopardy Statement</h4>
+                        <p>
+                          Financial asset trading is highly speculative. Never input API values, access codes, or credentials connected to live funds that you are not fully prepared to lose in their entirety.
+                        </p>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-theme-accent font-bold uppercase tracking-wider border-b border-theme-border/60 pb-2 flex items-center gap-1.5 font-mono text-[10px]">
+                      🔒 SECURITY & DATA PROTECTION PROTOCOLS
+                    </p>
+                    <div className="space-y-4 text-gray-300">
+                      <div>
+                        <h4 className="font-bold text-white mb-1">1. Client-to-Broker Encryption Standard</h4>
+                        <p>
+                          Your connection details, including key identifiers and sandbox/live credentials, are strictly processed through secure backend instances directly to the designated broker REST nodes. No plain text secrets are saved in your browser files.
+                        </p>
+                      </div>
+
+                      <div>
+                        <h4 className="font-bold text-white mb-1">2. Identity Alignment</h4>
+                        <p>
+                          Your Google Profile identity (authorized email and unique token) is utilized solely to authorize database-bound security records so we can safely align configurations across user spaces.
+                        </p>
+                      </div>
+
+                      <div>
+                        <h4 className="font-bold text-white mb-1">3. Privacy Ethics Code</h4>
+                        <p>
+                          We never sell, rent, disclose, or share telemetry data, private system settings, transaction statistics, or emails to external commercial advertisers or brokers.
+                        </p>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+              
+              <div className="p-4 bg-theme-input/60 border-t border-theme-border flex justify-end gap-3">
+                <button
+                  onClick={() => setShowModal(null)}
+                  className="px-4 py-2 text-gray-400 hover:text-white text-xs font-bold uppercase transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (user && !consentedToTerms) {
+    return (
+      <div className="bg-theme-bg min-h-screen flex items-center justify-center relative overflow-hidden border-[12px] border-theme-input px-4 sm:px-6 py-12 antialiased animate-fade-in">
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,#1f2937_1px,transparent_1px),linear-gradient(to_bottom,#1f2937_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] opacity-30" />
+        
+        <div className="max-w-xl w-full relative z-10 my-auto">
+          <div className="bg-theme-panel border border-theme-border rounded-xl p-6 sm:p-8 shadow-2xl space-y-6">
+            <div className="flex flex-col items-center gap-3 text-center">
+              <div className="w-14 h-14 bg-rose-500/10 border border-rose-500/20 rounded-2xl flex items-center justify-center text-rose-400 shadow-inner animate-pulse">
+                <ShieldCheck className="w-7 h-7" />
+              </div>
+              <div className="space-y-0.5">
+                <h1 className="text-lg font-bold tracking-tight uppercase text-white font-display">Legal Onboarding & Sentry Authorization</h1>
+                <p className="text-[10px] text-theme-accent font-mono tracking-widest uppercase">Required security & disclosure sequence</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-gray-400 leading-relaxed font-sans text-center">
+              Welcome, <span className="text-white font-bold">{user.email}</span>. To complete onboarding and access your private copy-portfolio workspace, you must review and accept the system disclosures & trading risks below.
             </p>
 
-            {/* Terms of Service & Privacy Risk Consent Agreement Controls */}
+            <div className="p-4 bg-theme-input/80 border border-theme-border rounded-lg space-y-3.5 max-h-[220px] overflow-y-auto text-xs text-gray-300 custom-scrollbar leading-relaxed">
+              <div>
+                <h4 className="font-bold text-rose-400 uppercase tracking-wider font-mono text-[10px] border-b border-rose-950/50 pb-1 flex items-center gap-1.5">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0" /> ABSOLUTE FINANCIAL DISCLAIMER & RISK DEVIATION
+                </h4>
+                <p className="mt-1.5 font-sans">
+                  This platform operates solely as a personalized automated testing and execution interface. Under no circumstances does this application guarantee profitable trading outcomes, positive capital returns, or specific portfolio results. Automated trading models are susceptible to massive drawdowns, technical failures, and rapid loss of capital.
+                </p>
+              </div>
+
+              <div className="bg-rose-500/10 border border-rose-500/20 p-3 rounded-lg text-rose-300 font-medium font-sans">
+                You expressly declare and fully agree that you are <strong>NOT trusting this software to make money for you</strong>. Financial asset trading is highly speculative. Never input API values, access codes, or credentials connected to live funds that you are not fully prepared to lose in their entirety.
+              </div>
+
+              <div>
+                <h4 className="font-bold text-white uppercase tracking-wider font-mono text-[10px] border-b border-theme-border pb-1">
+                  1. Absolute Absence of Liability for "Bad Trades"
+                </h4>
+                <p className="mt-1.5 font-sans">
+                  The developers, hosts, authors, and operators of this software are entirely held harmless from your trading outcomes. We hold zero liability for "bad trades", technical execution bugs, unexpected software crashes, API response latencies, market slippage, broker errors, incorrect data feeds, or manual execution errors.
+                </p>
+              </div>
+
+              <div>
+                <h4 className="font-bold text-white uppercase tracking-wider font-mono text-[10px] border-b border-theme-border pb-1">
+                  2. Privacy & Data Integrity
+                </h4>
+                <p className="mt-1.5 font-sans">
+                  Your Google Profile identity (authorized email and unique token) is utilized solely to authorize database-bound security records so we can safely align configurations across user spaces. We never sell, rent, disclose, or share telemetry data to third parties.
+                </p>
+              </div>
+            </div>
+
             <div className="space-y-3 bg-theme-input/50 border border-theme-border p-4 rounded-lg">
-              <p className="text-[9.5px] text-gray-400 font-mono uppercase tracking-wider font-bold border-b border-theme-border/50 pb-1.5 flex items-center gap-1.5">
-                <ShieldCheck className="w-3.5 h-3.5 text-theme-accent" /> Legal Agreement & Consent Node
-              </p>
-              
               <label className="flex items-start gap-2.5 cursor-pointer select-none group text-[11px] text-gray-300">
                 <input
                   type="checkbox"
@@ -567,7 +935,6 @@ export default function App() {
               </label>
             </div>
 
-            {/* Error messaging inside the login container */}
             {showConsentError && (
               <div className="bg-rose-500/10 border border-rose-500/20 text-rose-300 text-[10.5px] p-3 rounded-lg flex items-start gap-2.5 font-mono uppercase leading-normal">
                 <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
@@ -575,7 +942,24 @@ export default function App() {
               </div>
             )}
 
-            <div className="pt-1">
+            <div className="flex gap-3.5 pt-1">
+              <button
+                onClick={async () => {
+                  try {
+                    await signOut(auth);
+                    setConsentedToTerms(null);
+                    setConsentedTerms(false);
+                    setConsentedRisk(false);
+                    triggerBanner("Waiver declined. Security session closed.", "error");
+                  } catch (err: any) {
+                    triggerBanner(`Cancellation failed: ${err.message}`, "error");
+                  }
+                }}
+                className="w-1/2 py-3 rounded-lg text-xs font-black uppercase tracking-wider text-gray-400 hover:text-white border border-theme-border hover:bg-white/5 transition-all duration-150 cursor-pointer active:scale-98"
+              >
+                Decline & Exit
+              </button>
+
               <button
                 onClick={async () => {
                   if (!consentedTerms || !consentedRisk) {
@@ -585,36 +969,26 @@ export default function App() {
                   }
                   setShowConsentError(false);
                   try {
-                    await signInWithPopup(auth, googleProvider);
-                    triggerBanner("Successfully signed in with Google auth node.", "success");
+                    const userRef = doc(db, "users", user.uid);
+                    await setDoc(userRef, {
+                      consentedToTerms: true,
+                      consentedAt: new Date().toISOString()
+                    }, { merge: true });
+                    setConsentedToTerms(true);
+                    triggerBanner("Successfully initialized secure trading access.", "success");
                   } catch (err: any) {
-                    triggerBanner(`Auth failed: ${err.message}`, "error");
+                    triggerBanner(`Failed to record validation signature: ${err.message}`, "error");
                   }
                 }}
-                className={`w-full transition-all duration-150 py-3 rounded-lg text-xs font-black uppercase tracking-wider flex items-center justify-center gap-3 cursor-pointer shadow-lg active:scale-98 ${
+                className={`w-1/2 transition-all duration-150 py-3 rounded-lg text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer shadow-lg active:scale-98 ${
                   consentedTerms && consentedRisk 
                     ? "bg-white text-black hover:bg-gray-100" 
                     : "bg-gray-600/30 text-gray-500 border border-gray-600/20 cursor-not-allowed"
                 }`}
               >
-                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
-                  <path
-                    fill={consentedTerms && consentedRisk ? "#EA4335" : "#6b7280"}
-                    d="M12.24 10.285V14.4h6.887c-.275 1.565-1.88 4.6-6.887 4.6-4.33 0-7.859-3.58-7.859-8s3.53-8 7.859-8c2.46 0 4.105 1.025 5.047 1.926l3.243-3.12C18.425 2.05 15.635 1 12.24 1 5.922 1 .8 6.122.8 12.4s5.122 11.4 11.44 11.4c6.6 0 11-4.635 11-11.19 0-.75-.08-1.32-.18-1.885H12.24z"
-                  />
-                </svg>
-                <span>Authorize with Google</span>
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Accept & Enter Portal</span>
               </button>
-            </div>
-
-            <div className="p-3.5 rounded border border-theme-border bg-theme-input flex items-start gap-2.5">
-              <HeartHandshake className="w-4 h-4 text-theme-accent shrink-0 mt-0.5" />
-              <div className="space-y-0.5">
-                <p className="text-[10px] text-gray-300 font-bold uppercase font-mono tracking-wider">Multi-Studio Alignment</p>
-                <p className="text-[9px] text-gray-500 font-sans leading-relaxed">
-                  Log in with the same email across Google ecosystems to automatically sync positions, settings, and credentials safely. No local keys saved on servers.
-                </p>
-              </div>
             </div>
           </div>
         </div>
@@ -706,19 +1080,7 @@ export default function App() {
                   onClick={() => setShowModal(null)}
                   className="px-4 py-2 text-gray-400 hover:text-white text-xs font-bold uppercase transition-colors"
                 >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => {
-                    if (showModal === "terms") {
-                      setConsentedTerms(true);
-                      setConsentedRisk(true);
-                    }
-                    setShowModal(null);
-                  }}
-                  className="bg-white hover:bg-gray-100 text-black px-4.5 py-2.5 rounded-lg text-xs font-black uppercase tracking-wider transition-colors shadow-lg active:scale-97"
-                >
-                  {showModal === "terms" ? "I Accept Policies & Acknowledge Risk" : "Understood"}
+                  Close
                 </button>
               </div>
             </div>
@@ -780,14 +1142,14 @@ export default function App() {
             Live Dashboard View
           </button>
           <button
-            onClick={() => setActiveTab("terminal")}
+            onClick={() => setActiveTab("pythonSync")}
             className={`font-mono text-xs font-bold uppercase tracking-wider pb-2 border-b-2 transition-all cursor-pointer flex items-center gap-2 ${
-              activeTab === "terminal"
+              activeTab === "pythonSync"
                 ? "border-theme-accent text-white"
                 : "border-transparent text-gray-500 hover:text-gray-300"
             }`}
           >
-            Robinhood
+            Python Bot Sync
           </button>
           <button
             onClick={() => setActiveTab("leaderboard")}
@@ -803,17 +1165,8 @@ export default function App() {
 
         {activeTab === "leaderboard" ? (
           <LeaderboardPanel currentUserId={user?.uid} />
-        ) : activeTab === "terminal" ? (
-          <SimulatedTerminal
-            botConfig={config}
-            botState={botState}
-            onToggleBot={handleToggleBot}
-            onTriggerScan={handleTriggerScan}
-            isScanning={isScanning}
-            currentUser={user}
-            onSaveConfig={handleSaveConfig}
-            alpacaAccount={alpacaAccount}
-          />
+        ) : activeTab === "pythonSync" ? (
+          <PythonSyncHub currentUser={user} />
         ) : (
           <>
             {/* Core Quick Rule Highlights banner */}

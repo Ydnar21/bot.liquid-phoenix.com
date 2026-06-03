@@ -21,9 +21,18 @@
           "type": "string",
           "format": "date-time",
           "description": "Profile registration time"
+        },
+        "consentedToTerms": {
+          "type": "boolean",
+          "description": "Whether the user successfully completed legal onboarding and waiver signature"
+        },
+        "consentedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the consent agreement was formally submitted and recorded"
         }
       },
-      "required": ["uid", "email", "createdAt"]
+      "required": ["uid", "email"]
     },
     "userCredentials": {
       "title": "User Credentials",

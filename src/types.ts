@@ -52,6 +52,9 @@ export interface StockSetup {
   demandZone?: number;
   avgVolume20d?: number;
   rsiStatus?: string;
+  multiTimeframeTrendConfirmed?: boolean;
+  weeklyTrendStatus?: "BULLISH" | "BEARISH" | "NEUTRAL";
+  dailyTrendStructure?: "PROGRESSIVE" | "CONSOLIDATING" | "WEAK";
 }
 
 export interface ActivePosition {
@@ -85,6 +88,9 @@ export interface ActivePosition {
   demandZone?: number;
   avgVolume20d?: number;
   rsiStatus?: string;
+  multiTimeframeTrendConfirmed?: boolean;
+  weeklyTrendStatus?: "BULLISH" | "BEARISH" | "NEUTRAL";
+  dailyTrendStructure?: "PROGRESSIVE" | "CONSOLIDATING" | "WEAK";
 }
 
 export interface ClosedTrade {

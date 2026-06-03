@@ -10,25 +10,12 @@ export default function PerformanceHistory({ history }: PerformanceHistoryProps)
   // Compute basic stats
   const totalTrades = history.length;
   
-  // Filter out trades where the day ended (catalyst day reached or pre-earnings exit)
-  const profitableTrades = history.filter((t) => {
-    const isDayEndedExit = t.exitReason === "CATALYST_DAY_SELLING" || 
-                           t.exitReason === "EARNINGS_PRE_EXIT" || 
-                           t.exitReason.includes("CATALYST") || 
-                           t.exitReason.includes("EARNINGS");
-    return t.pl > 0 && !isDayEndedExit;
-  });
-
-  const losingTrades = history.filter((t) => {
-    const isDayEndedExit = t.exitReason === "CATALYST_DAY_SELLING" || 
-                           t.exitReason === "EARNINGS_PRE_EXIT" || 
-                           t.exitReason.includes("CATALYST") || 
-                           t.exitReason.includes("EARNINGS");
-    return t.pl <= 0 && !isDayEndedExit;
-  });
+  const profitableTrades = history.filter((t) => t.pl > 0);
+  const losingTrades = history.filter((t) => t.pl <= 0);
   
-  const totalEvaluated = profitableTrades.length + losingTrades.length;
-  const winRate = totalEvaluated > 0 ? (profitableTrades.length / totalEvaluated) * 100 : 0;
+  const totalEvaluated = totalTrades;
+  const winRate = totalTrades > 0 ? (profitableTrades.length / totalTrades) * 105 / 1.05 : 0; // Simplified exactly to (profitable / total) * 100
+  const winRateNormalized = totalTrades > 0 ? (profitableTrades.length / totalTrades) * 100 : 0;
   const totalProfitLossList = history.reduce((acc, t) => acc + t.pl, 0);
 
   // Advanced P&L analytics

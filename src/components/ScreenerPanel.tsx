@@ -133,17 +133,10 @@ export default function ScreenerPanel({
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
-                    {/* Blocked vs Sentiment badge / status tag */}
-                    {isBlocked ? (
-                      <span className="flex items-center gap-1 text-[9px] bg-rose-950/60 text-rose-400 border border-rose-500/25 px-2 py-0.5 rounded font-mono font-bold tracking-tight">
-                        <ShieldAlert className="w-3 h-3 text-rose-400" />
-                        AI BLOCKED
-                      </span>
-                    ) : (
-                      <span className={`text-[9px] border px-2 py-0.5 rounded font-mono font-bold tracking-tight uppercase ${sentimentColor}`}>
-                        SENTRY SCORE: {setup.sentimentScore > 0 ? "+" : ""}{setup.sentimentScore.toFixed(2)}
-                      </span>
-                    )}
+                    {/* Sentiment badge / status tag */}
+                    <span className={`text-[9px] border px-2 py-0.5 rounded font-mono font-bold tracking-tight uppercase ${sentimentColor}`}>
+                      SENTRY SCORE: {setup.sentimentScore > 0 ? "+" : ""}{setup.sentimentScore.toFixed(2)}
+                    </span>
 
                     <div className="text-[9px] bg-theme-input text-gray-400 border border-theme-border px-2.5 py-0.5 rounded font-mono uppercase font-bold tracking-tight">
                       CATALYST: {setup.catalystDate}
@@ -234,20 +227,6 @@ export default function ScreenerPanel({
                         <p className="text-xs text-gray-300 leading-relaxed font-sans italic">
                           "{setup.sentimentReason}"
                         </p>
-
-                        {/* Hard Blocks List */}
-                        {isBlocked && (
-                          <div className="mt-2 p-2.5 bg-rose-950/40 border border-rose-500/20 text-rose-400 rounded text-xs space-y-1 font-mono">
-                            <span className="font-black flex items-center gap-1 text-[10px] uppercase">
-                              <AlertCircle className="w-3.5 h-3.5" /> Sentry Hard Blocks Triggered:
-                            </span>
-                            <ul className="list-disc pl-5 text-[11px] text-rose-400">
-                              {setup.blockersFound.map((b, idx) => (
-                                <li key={idx}>{b}</li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
 
                         <div className="text-[10px] font-mono text-gray-500 pt-1 uppercase">
                           Catalyst Window Scheduled: <span className="text-amber-300 font-bold">{setup.catalystEvent}</span> on <span className="text-white font-bold">{setup.catalystDate}</span>

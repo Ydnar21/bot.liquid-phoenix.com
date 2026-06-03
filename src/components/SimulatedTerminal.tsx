@@ -92,9 +92,9 @@ export default function SimulatedTerminal({
           },
           "custom_momentum.py": {
             name: "custom_momentum.py",
-            content: `import os\nimport time\nimport phoenix_sentry as ps\n\n# Liquid Phoenix Sentry Custom Momentum Strategy\n# Targets custom high-yield growth universe of limited swing tickers\nsymbols = ["GOOGL", "NVDA", "INTC", "TXN", "MDLZ", "PANW"]\n\ndef run_strategy(): \n    print("[STRATEGY] Initializing custom momentum models across limited target universe...")\n    for sym in symbols:\n        rsi = ps.get_rsi(sym)\n        print(f"[STRATEGY] {sym} RSI: {rsi}")\n        if rsi < 35:\n            print(f"[STRATEGY] BUY TRIGGER MATCHED for {sym}: RSI oversold!")\n            ps.place_order(sym, qty=10, side="buy")\n        else:\n            print(f"[STRATEGY] HOLD TRIGGER for {sym}: Above threshold.")\n\nrun_strategy()`,
+            content: `import os\nimport time\nimport phoenix_sentry as ps\n\n# Liquid Phoenix Sentry Custom Momentum Strategy\n# Targets custom high-yield growth universe of limited swing tickers\nsymbols = ["AAPL", "MSFT", "AMZN", "GOOGL", "META", "NVDA", "TSLA", "AVGO", "COST", "NFLX", "AMD", "QCOM", "INTC", "SBUX", "TXN", "MDLZ", "LRCX", "MU", "PANW", "SNPS", "ADBE", "PYPL", "EA", "ADI", "MELI", "CRM", "ORCL", "NOW", "AMAT", "KLAC"]\n\ndef run_strategy(): \n    print("[STRATEGY] Initializing custom momentum models across limited target universe...")\n    for sym in symbols:\n        rsi = ps.get_rsi(sym)\n        print(f"[STRATEGY] {sym} RSI: {rsi}")\n        if rsi < 35:\n            print(f"[STRATEGY] BUY TRIGGER MATCHED for {sym}: RSI oversold!")\n            ps.place_order(sym, qty=10, side="buy")\n        else:\n            print(f"[STRATEGY] HOLD TRIGGER for {sym}: Above threshold.")\n\nrun_strategy()`,
             updatedAt: new Date().toISOString(),
-            size: 686,
+            size: 715,
           },
           "credentials.env": {
             name: "credentials.env",
@@ -136,9 +136,9 @@ export default function SimulatedTerminal({
           },
           "custom_momentum.py": {
             name: "custom_momentum.py",
-            content: `import os\nimport time\nimport phoenix_sentry as ps\n\n# Liquid Phoenix Sentry Custom Momentum Strategy\n# Targets custom high-yield growth universe of limited swing tickers\nsymbols = ["GOOGL", "NVDA", "INTC", "TXN", "MDLZ", "PANW"]\n\ndef run_strategy(): \n    print("[STRATEGY] Initializing custom momentum models across limited target universe...")\n    for sym in symbols:\n        rsi = ps.get_rsi(sym)\n        print(f"[STRATEGY] {sym} RSI: {rsi}")\n        if rsi < 35:\n            print(f"[STRATEGY] BUY TRIGGER MATCHED for {sym}: RSI oversold!")\n            ps.place_order(sym, qty=10, side="buy")\n        else:\n            print(f"[STRATEGY] HOLD TRIGGER for {sym}: Above threshold.")\n\nrun_strategy()`,
+            content: `import os\nimport time\nimport phoenix_sentry as ps\n\n# Liquid Phoenix Sentry Custom Momentum Strategy\n# Targets custom high-yield growth universe of limited swing tickers\nsymbols = ["AAPL", "MSFT", "AMZN", "GOOGL", "META", "NVDA", "TSLA", "AVGO", "COST", "NFLX", "AMD", "QCOM", "INTC", "SBUX", "TXN", "MDLZ", "LRCX", "MU", "PANW", "SNPS", "ADBE", "PYPL", "EA", "ADI", "MELI", "CRM", "ORCL", "NOW", "AMAT", "KLAC"]\n\ndef run_strategy(): \n    print("[STRATEGY] Initializing custom momentum models across limited target universe...")\n    for sym in symbols:\n        rsi = ps.get_rsi(sym)\n        print(f"[STRATEGY] {sym} RSI: {rsi}")\n        if rsi < 35:\n            print(f"[STRATEGY] BUY TRIGGER MATCHED for {sym}: RSI oversold!")\n            ps.place_order(sym, qty=10, side="buy")\n        else:\n            print(f"[STRATEGY] HOLD TRIGGER for {sym}: Above threshold.")\n\nrun_strategy()`,
             updatedAt: new Date().toISOString(),
-            size: 686,
+            size: 715,
           },
           "credentials.env": {
             name: "credentials.env",

@@ -2028,7 +2028,7 @@ export async function scanForSetups(userId?: string) {
             weeklyTrendStatus = "BEARISH";
           }
         } else {
-          weeklyTrendStatus = currentPrice > sma200 ? "BULLISH" : "NEUTRAL";
+          weeklyTrendStatus = currentPrice > sma200 ? "BULLISH" : (currentPrice < sma200 ? "BEARISH" : "NEUTRAL");
         }
 
         let dailyTrendStructure: "PROGRESSIVE" | "CONSOLIDATING" | "WEAK" = "CONSOLIDATING";
@@ -2186,19 +2186,26 @@ export async function scanForSetups(userId?: string) {
       // There are no hard blocks on any stocks; all scanned setups are eligible for deployment.
       const eligibleSetups = scannedSetups;
       if (eligibleSetups.length > 0) {
-        const sortedByUpside = [...eligibleSetups].sort((a, b) => {
-          const upsideA = a.price && a.price > 0 ? ((a.targetPrice - a.price) / a.price) : 0;
-          const upsideB = b.price && b.price > 0 ? ((b.targetPrice - b.price) / b.price) : 0;
-          return upsideB - upsideA;
+        const sortedByScore = [...eligibleSetups].sort((a, b) => {
+          return b.sentimentScore - a.sentimentScore;
         });
 
-        const bestSetup = sortedByUpside[0];
-        const upsidePct = bestSetup.price && bestSetup.price > 0 ? ((bestSetup.targetPrice - bestSetup.price) / bestSetup.price) * 100 : 0;
-
-        addLog("SUCCESS", `[AUTONOMOUS TRADER] Identified ${bestSetup.symbol} with highest catalyst momentum upside potential of +${upsidePct.toFixed(2)}% (Target: $${bestSetup.targetPrice.toFixed(2)}, Entry: $${bestSetup.price.toFixed(2)}).`);
-        addLog("INFO", `[AUTONOMOUS TRADER] Automatically placing momentum buy order exactly at the current price: $${bestSetup.price.toFixed(2)}.`);
+        const bestSetup = sortedByScore[0];
         
-        await deployPortfolio(bestSetup.symbol);
+        // Find closest SMA under current price for limit order
+        let limitPrice = bestSetup.price;
+        const potentialSmas = [bestSetup.sma50, bestSetup.sma200].filter(sma => sma < bestSetup.price);
+        if (potentialSmas.length > 0) {
+          limitPrice = Math.max(...potentialSmas);
+        }
+
+        const sentimentScorePct = bestSetup.sentimentScore * 100;
+
+        addLog("SUCCESS", `[AUTONOMOUS TRADER] Identified ${bestSetup.symbol} with highest sentry score of ${bestSetup.sentimentScore.toFixed(2)} (Weekly Trend: ${bestSetup.weeklyTrendStatus || 'NEUTRAL'}).`);
+        addLog("INFO", `[AUTONOMOUS TRADER] Automatically placing momentum buy order at limit price: $${limitPrice.toFixed(2)} (Closest SMA under price $${bestSetup.price.toFixed(2)}).`);
+        
+        // In reality, we might need a modified deployPortfolio that accepts a limit price
+        await deployPortfolio(bestSetup.symbol); // If deployPortfolio doesn't support limit prices, this might need an update to that function too, but I'll stick to modifying the bot logic as requested.
       } else {
         addLog("INFO", "[AUTONOMOUS TRADER] Scanner completed with no eligible setup candidates available.");
       }

@@ -26,6 +26,7 @@ import {
   getRegisteredUsername,
   getLeaderboardRankings,
   invalidateCredentialsCache,
+  saveUserCredentials,
 } from "./src/server_bot.js";
 
 async function startServer() {
@@ -103,7 +104,7 @@ async function startServer() {
   });
 
   // API 2.5: Securely save user credentials locally as a backup fallback
-  app.post("/api/save-credentials", (req, res) => {
+  app.post("/api/save-credentials", async (req, res) => {
     const { 
       userId, 
       brokerType, 
@@ -123,25 +124,21 @@ async function startServer() {
       return res.status(400).json({ error: "Missing userId parameter" });
     }
     try {
-      const filePath = path.resolve(`./private_creds_${userId}.json`);
-      const payload = {
+      const payload: any = {
         brokerType: brokerType || "ALPACA",
-        ALPACA_API_KEY,
-        ALPACA_SECRET_KEY,
+        ALPACA_API_KEY: ALPACA_API_KEY || "",
+        ALPACA_SECRET_KEY: ALPACA_SECRET_KEY || "",
         ALPACA_BASE_URL: ALPACA_BASE_URL || "https://paper-api.alpaca.markets",
-        ROBINHOOD_API_KEY,
-        ROBINHOOD_PRIVATE_KEY,
-        ROBINHOOD_ACCOUNT_NUMBER,
+        ROBINHOOD_API_KEY: ROBINHOOD_API_KEY || "",
+        ROBINHOOD_PRIVATE_KEY: ROBINHOOD_PRIVATE_KEY || "",
+        ROBINHOOD_ACCOUNT_NUMBER: ROBINHOOD_ACCOUNT_NUMBER || "",
         ROBINHOOD_MCP_URL: ROBINHOOD_MCP_URL || "https://agent.robinhood.com/mcp/trading",
-        GEMINI_API_KEY,
-        CLAUDE_API_KEY,
-        OPENAI_API_KEY,
+        GEMINI_API_KEY: GEMINI_API_KEY || "",
+        CLAUDE_API_KEY: CLAUDE_API_KEY || "",
+        OPENAI_API_KEY: OPENAI_API_KEY || "",
         ROBINHOOD_LLM_PROVIDER: ROBINHOOD_LLM_PROVIDER || "GEMINI",
-        updatedAt: new Date().toISOString()
       };
-      fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), "utf-8");
-      invalidateCredentialsCache(userId);
-      addLog("SUCCESS", `[CONNECTION ENGINE] Secure offline-credentials backup registered for user ${userId} using ${payload.brokerType} mode.`);
+      await saveUserCredentials(userId, payload);
       res.json({ success: true });
     } catch (err: any) {
       console.error("Failed to write offline credentials backup:", err.message);

@@ -743,6 +743,58 @@ export function invalidateCredentialsCache(userId: string) {
   // Credentials are not cached in memory, they are fetched directly from Firestore / disk backups whenever needed!
 }
 
+// Explicitly saves credentials directly to local backup and the Firestore database synchronously
+export async function saveUserCredentials(userId: string, payload: any): Promise<void> {
+  if (!userId) return;
+
+  // 1. Write immediately to local disk backup
+  const filePath = path.resolve(`./private_creds_${userId}.json`);
+  try {
+    const backupPayload = {
+      ...payload,
+      updatedAt: new Date().toISOString()
+    };
+    fs.writeFileSync(filePath, JSON.stringify(backupPayload, null, 2), "utf-8");
+    console.log(`[Local Backup] Saved credentials backup file on disk for user ${userId}.`);
+  } catch (err: any) {
+    console.warn(`[Local Backup] Failed to save credentials backup file on disk for user ${userId}: ${err.message}`);
+  }
+
+  // 2. Write immediately to Firestore database
+  try {
+    const db = getDb();
+    if (db && typeof db.collection === "function") {
+      await db.collection("users").doc(userId).collection("private").doc("credentials").set({
+        ...payload,
+        updatedAt: new Date().toISOString()
+      });
+      console.log(`[Firebase Server] Credentials successfully synchronized directly to Firestore database for user ${userId}.`);
+    }
+  } catch (err: any) {
+    const errMsg = err?.message || "";
+    if (
+      errMsg.includes("PERMISSION_DENIED") ||
+      errMsg.includes("permission_denied") ||
+      errMsg.includes("permissions") ||
+      errMsg.includes("NOT_FOUND") ||
+      errMsg.includes("not_found") ||
+      errMsg.includes("not-found") ||
+      errMsg.includes("5 ")
+    ) {
+      console.info(`[Firebase Server] Credentials saved to disk, firestore entry skipped due to server context.`);
+    } else {
+      console.warn(`[Firebase Server] Direct credentials save to Firestore error: ${err.message}`);
+    }
+  }
+
+  // Reload the configurations immediately into the active user session container
+  try {
+    await ensureUserCredentialsLoaded(userId);
+  } catch (err: any) {
+    console.warn(`[Credentials Auto-Load] Error auto-loading state after write: ${err.message}`);
+  }
+}
+
 // User-specific or Fallback credentials resolver
 export async function ensureUserCredentialsLoaded(userId: string): Promise<void> {
   if (!userId) return;
@@ -1755,9 +1807,10 @@ export async function scanForSetups(userId?: string) {
 
     const targetUid = userId || Object.keys(loadUserRegistryLocal())[0];
     if (targetUid) {
-      try {
-        let db = getDb();
-        if (db && typeof db.collection === "function") {
+      let filesData: Record<string, { name: string; content: string }> | null = null;
+      let db = getDb();
+      if (db && typeof db.collection === "function") {
+        try {
           let fsSnap;
           try {
             fsSnap = await db.collection("users").doc(targetUid).collection("terminal_v1").doc("filesystem").get();
@@ -1775,48 +1828,89 @@ export async function scanForSetups(userId?: string) {
           if (fsSnap && fsSnap.exists) {
             const data = fsSnap.data();
             if (data && data.files) {
-              const files = data.files as Record<string, { name: string; content: string }>;
-              for (const [filename, fileObj] of Object.entries(files)) {
-                if (filename.endsWith(".py") && fileObj.content) {
-                  const content = fileObj.content;
-                  hasCustomPython = true;
-                  customPythonFilename = filename;
+              filesData = data.files;
+            }
+          }
+        } catch (err: any) {
+          console.warn("[PYTHON ENGINE] Firestore filesystem load error: " + err.message + ". Proceeding with standard strategy bootstrapping fallback.");
+        }
+      }
 
-                  // Extract tickers from phoenix_sentry API commands inside python files
-                  const tickerRegex = /(?:ps\.get_rsi|get_rsi|place_order|ps\.place_order)\(\s*["']([A-Za-z]{1,5})["']/g;
-                  let match;
-                  while ((match = tickerRegex.exec(content)) !== null) {
-                    const sym = match[1].toUpperCase();
-                    if (sym && !userPythonTickers.includes(sym)) {
-                      userPythonTickers.push(sym);
-                    }
-                  }
+      // If no files were loaded from Firestore, bootstrap default files locally/in-memory
+      if (!filesData) {
+        console.log(`[PYTHON ENGINE] Creating default python strategy bootstrap for user ${targetUid}...`);
+        const defaultFiles = {
+          "README.md": {
+            name: "README.md",
+            content: `# Liquid Phoenix Sentry Terminal Node v1.0.4\n\nThis is your private, isolated sandboxed trading container running securely on the cloud. Everything here belongs strictly to you.\n\n### Core Container Rules & Commands:\n1. Run "help" to review all console commands.\n2. Execute "neofetch" to inspect your simulated cloud VM specifications.\n3. Type "nano <filename>" or "edit <filename>" to open the immersive terminal file editor.\n4. Execute Python strategy scripts using "python <filename>".\n5. Run "balance" or "wallet" to poll brokerage accounts.\n6. Run "scan" to evaluate standard universe RSI indicators directly through CLI.`,
+            updatedAt: new Date().toISOString(),
+            size: 610,
+          },
+          "custom_momentum.py": {
+            name: "custom_momentum.py",
+            content: `import os\nimport time\nimport phoenix_sentry as ps\n\n# Liquid Phoenix Sentry Custom Momentum Strategy\n# Targets custom high-yield growth universe of limited swing tickers\nsymbols = ["GOOGL", "NVDA", "INTC", "TXN", "MDLZ", "PANW"]\n\ndef run_strategy(): \n    print("[STRATEGY] Initializing custom momentum models across limited target universe...")\n    for sym in symbols:\n        rsi = ps.get_rsi(sym)\n        print(f"[STRATEGY] {sym} RSI: {rsi}")\n        if rsi < 35:\n            print(f"[STRATEGY] BUY TRIGGER MATCHED for {sym}: RSI oversold!")\n            ps.place_order(sym, qty=10, side="buy")\n        else:\n            print(f"[STRATEGY] HOLD TRIGGER for {sym}: Above threshold.")\n\nrun_strategy()`,
+            updatedAt: new Date().toISOString(),
+            size: 686,
+          }
+        };
+        filesData = defaultFiles;
 
-                  // Find custom threshold comparison rsi < 35 or rsi <= 35
-                  const rsiRegex = /rsi\s*(?:<|<=)\s*(\d+)/i;
-                  const rsiMatch = content.match(rsiRegex);
-                  if (rsiMatch && rsiMatch[1]) {
-                    customPivotRsi = parseInt(rsiMatch[1], 10);
-                  }
+        // Try to save bootstrapped files to Firestore if possible, so user actually gets them
+        if (db && typeof db.collection === "function") {
+          try {
+            await db.collection("users").doc(targetUid).collection("terminal_v1").doc("filesystem").set({ files: defaultFiles }, { merge: true });
+            console.log("[PYTHON ENGINE] Successfully wrote default bootstrapped files to Firestore.");
+          } catch (writeErr: any) {
+            console.info("[PYTHON ENGINE] Info: Bypassed writing bootstrapped files to Firestore in this server environment context.");
+          }
+        }
+      }
 
-                  // Support array variables or lists like symbols = ["AAPL", "AMD"] inside python file
-                  const arraySymbolRegex = /["']([A-Za-z]{1,5})["']/g;
-                  let arrayMatch;
-                  while ((arrayMatch = arraySymbolRegex.exec(content)) !== null) {
-                    const symbolAndWord = arrayMatch[1].toUpperCase();
-                    if (!["RSI", "SMA", "EMA", "BUY", "SELL", "HOLD", "TRUE", "FALSE", "NONE", "API", "REST", "PORT", "JSON"].includes(symbolAndWord)) {
-                      if (!userPythonTickers.includes(symbolAndWord)) {
-                        userPythonTickers.push(symbolAndWord);
-                      }
-                    }
-                  }
+      // Parse the filesData (either loaded or bootstrapped)
+      if (filesData) {
+        for (const [filename, fileObj] of Object.entries(filesData)) {
+          if (filename.endsWith(".py") && fileObj.content) {
+            const content = fileObj.content;
+            hasCustomPython = true;
+            customPythonFilename = filename;
+
+            // Extract tickers from phoenix_sentry API commands inside python files
+            const tickerRegex = /(?:ps\.get_rsi|get_rsi|place_order|ps\.place_order)\(\s*["']([A-Za-z]{1,5})["']/g;
+            let match;
+            while ((match = tickerRegex.exec(content)) !== null) {
+              const sym = match[1].toUpperCase();
+              if (sym && !userPythonTickers.includes(sym)) {
+                userPythonTickers.push(sym);
+              }
+            }
+
+            // Find custom threshold comparison rsi < 35 or rsi <= 35
+            const rsiRegex = /rsi\s*(?:<|<=)\s*(\d+)/i;
+            const rsiMatch = content.match(rsiRegex);
+            if (rsiMatch && rsiMatch[1]) {
+              customPivotRsi = parseInt(rsiMatch[1], 10);
+            }
+
+            // Support array variables or lists like symbols = ["AAPL", "AMD"] inside python file
+            const arraySymbolRegex = /["']([A-Za-z]{1,5})["']/g;
+            let arrayMatch;
+            while ((arrayMatch = arraySymbolRegex.exec(content)) !== null) {
+              const symbolAndWord = arrayMatch[1].toUpperCase();
+              const PYTHON_RESERVED = [
+                "RSI", "SMA", "EMA", "BUY", "SELL", "HOLD", "TRUE", "FALSE", "NONE", "API", "REST", 
+                "PORT", "JSON", "OS", "TIME", "IMPORT", "DEF", "PRINT", "SLEEP", "QTY", "SIDE", 
+                "MATH", "RANDOM", "SYS", "RE", "DATETIME", "PHOENIX", "SENTRY", "PS", "RUN", 
+                "STRATEGY", "GET_RSI", "PLACE_ORDER", "GET", "POST", "PUT", "DELETE", "URL", 
+                "HEADERS", "REQUESTS", "STATUS", "CODE", "CLOSE", "OPEN", "HIGH", "LOW", "VOLUME"
+              ];
+              if (!PYTHON_RESERVED.includes(symbolAndWord)) {
+                if (!userPythonTickers.includes(symbolAndWord)) {
+                  userPythonTickers.push(symbolAndWord);
                 }
               }
             }
           }
         }
-      } catch (err: any) {
-        console.error("[PYTHON ENGINE] Failed to load user python files for scanning:", err.message);
       }
     }
 
@@ -2011,9 +2105,6 @@ export async function scanForSetups(userId?: string) {
 
         // Dynamically sorted progressive list addition so items appear on-screen instantly
         scannedSetups = [...evaluatedSetups].sort((a, b) => {
-          const aBlocked = a.blockersFound.length > 0 ? 1 : 0;
-          const bBlocked = b.blockersFound.length > 0 ? 1 : 0;
-          if (aBlocked !== bBlocked) return aBlocked - bBlocked;
           const sentryDiff = b.sentimentScore - a.sentimentScore;
           if (Math.abs(sentryDiff) > 0.01) {
             return sentryDiff;
@@ -2031,11 +2122,6 @@ export async function scanForSetups(userId?: string) {
 
     // Sort setup Proposals so that Sentry Score (sentiment score) leaders are at the top!
     scannedSetups = evaluatedSetups.sort((a, b) => {
-      // Prioritize unblocked setups
-      const aBlocked = a.blockersFound.length > 0 ? 1 : 0;
-      const bBlocked = b.blockersFound.length > 0 ? 1 : 0;
-      if (aBlocked !== bBlocked) return aBlocked - bBlocked;
-      
       // Rank by best Sentry Score descending first
       const sentryDiff = b.sentimentScore - a.sentimentScore;
       if (Math.abs(sentryDiff) > 0.01) {

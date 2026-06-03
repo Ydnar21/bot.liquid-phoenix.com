@@ -2184,29 +2184,22 @@ export async function scanForSetups(userId?: string) {
     // If bot task scheduler is active and we don't have an open activePosition, automatically analyze 
     // and deploy the setup with the absolute largest momentum upside potential.
     if (botConfig.isBotRunning && !activePosition && scannedSetups.length > 0) {
-      // There are no hard blocks on any stocks; all scanned setups are eligible for deployment.
-      const eligibleSetups = scannedSetups;
+      // Filter for minimum score of 0.7
+      const eligibleSetups = scannedSetups.filter(s => s.sentimentScore > 0.7);
       if (eligibleSetups.length > 0) {
         const sortedByScore = [...eligibleSetups].sort((a, b) => {
           return b.sentimentScore - a.sentimentScore;
         });
 
         const bestSetup = sortedByScore[0];
-        
-        // Find closest SMA under current price for limit order
-        let limitPrice = bestSetup.price;
-        const potentialSmas = [bestSetup.sma50, bestSetup.sma200].filter(sma => sma < bestSetup.price);
-        if (potentialSmas.length > 0) {
-          limitPrice = Math.max(...potentialSmas);
-        }
 
         const sentimentScorePct = bestSetup.sentimentScore * 100;
 
         addLog("SUCCESS", `[AUTONOMOUS TRADER] Identified ${bestSetup.symbol} with highest sentry score of ${bestSetup.sentimentScore.toFixed(2)} (Weekly Trend: ${bestSetup.weeklyTrendStatus || 'NEUTRAL'}).`);
-        addLog("INFO", `[AUTONOMOUS TRADER] Automatically placing momentum buy order at limit price: $${limitPrice.toFixed(2)} (Closest SMA under price $${bestSetup.price.toFixed(2)}).`);
+        addLog("INFO", `[AUTONOMOUS TRADER] Automatically placing momentum buy order at market price.`);
         
         // In reality, we might need a modified deployPortfolio that accepts a limit price
-        await deployPortfolio(bestSetup.symbol); // If deployPortfolio doesn't support limit prices, this might need an update to that function too, but I'll stick to modifying the bot logic as requested.
+        await deployPortfolio(bestSetup.symbol);
       } else {
         addLog("INFO", "[AUTONOMOUS TRADER] Scanner completed with no eligible setup candidates available.");
       }
@@ -2520,20 +2513,31 @@ export async function deployPortfolio(symbol: string, userId?: string): Promise<
             symbol,
             qty: qty.toString(),
             side: "buy",
-            type: "limit",
-            limit_price: entryPrice.toString(),
-            time_in_force: "gtc",
-            extended_hours: true,
+            type: "market",
+            time_in_force: "day",
+            extended_hours: false,
           };
 
           const orderRes = await alpacaUserFetch(creds as any, "/v2/orders", {
             method: "POST",
             body: JSON.stringify(orderPayload),
           });
+          
+          // Verify order on Alpaca
+          let finalEntryPrice = entryPrice;
+          try {
+            const orderStatus = await alpacaUserFetch(creds as any, `/v2/orders/${orderRes.id}`);
+            if (orderStatus.filled_avg_price) {
+              finalEntryPrice = parseFloat(orderStatus.filled_avg_price);
+            }
+          } catch (e) {
+            throw new Error(`Order verification failed for ${orderRes.id}: ${e.message}`);
+          }
 
-          addLog("SUCCESS", `[User ${creds.userId}] Copy Trade placed successfully! Bought ${qty} shares of ${symbol}. Order ID: ${orderRes.id}`);
+          addLog("SUCCESS", `[User ${creds.userId}] Copy Trade placed successfully! Bought ${qty} shares of ${symbol}. Order ID: ${orderRes.id}. Fill Price: $${finalEntryPrice.toFixed(2)}`);
           totalExecutedQty += qty;
           anySuccess = true;
+          // Note: Assuming finalEntryPrice should be used for subsequent calculations
         } catch (uErr: any) {
           addLog("ERROR", `[User ${creds.userId}] Copy Trade order rejected: ${uErr.message}`);
         }
@@ -2556,48 +2560,58 @@ export async function deployPortfolio(symbol: string, userId?: string): Promise<
         symbol,
         qty: qty.toString(),
         side: "buy",
-        type: "limit",
-        limit_price: entryPrice.toString(),
-        time_in_force: "gtc",
-        extended_hours: true,
+        type: "market",
+        time_in_force: "day",
+        extended_hours: false,
       };
 
       const orderRes = await alpacaFetch("/v2/orders", {
         method: "POST",
         body: JSON.stringify(orderPayload),
       }, userId);
+      
+      // Verify order on Alpaca
+      let finalEntryPrice = entryPrice;
+      try {
+        const orderStatus = await alpacaFetch(`/v2/orders/${orderRes.id}`, {}, userId);
+        if (orderStatus.filled_avg_price) {
+          finalEntryPrice = parseFloat(orderStatus.filled_avg_price);
+        }
+      } catch (e) {
+        throw new Error(`Order verification failed for ${orderRes.id}: ${e.message}`);
+      }
 
-      addLog("SUCCESS", `Default connection buy order placed successfully! Qty: ${qty}, Order ID: ${orderRes.id}`);
+      addLog("SUCCESS", `Default connection buy order placed successfully! Qty: ${qty}, Order ID: ${orderRes.id}. Fill Price: $${finalEntryPrice.toFixed(2)}`);
       totalExecutedQty = qty;
+      
+      // Update session with correct entry price
+      session.activePosition = {
+        symbol,
+        companyName: proposal.companyName,
+        qty: totalExecutedQty || 1,
+        entryPrice: finalEntryPrice,
+        currentPrice: finalEntryPrice,
+        entryValue: (totalExecutedQty || 1) * finalEntryPrice,
+        currentValue: (totalExecutedQty || 1) * finalEntryPrice,
+        unrealizedPl: 0,
+        unrealizedPlPct: 0,
+        supportLevel,
+        targetPrice,
+        catalystDate: proposal.catalystDate,
+        catalystEvent: proposal.catalystEvent,
+        earningsDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0], // Estimated default
+        status: "NORMAL",
+        enteredAt: new Date().toISOString(),
+        hasBullishFVG: false,
+        bullishFVGPrice: 0,
+        isSMAPullback: proposal.isSMAPullback,
+        sma50Price: proposal.sma50Price,
+        supplyZone: proposal.supplyZone,
+        demandZone: proposal.demandZone,
+        avgVolume20d: proposal.avgVolume20d,
+        rsiStatus: proposal.rsiStatus,
+      };
     }
-
-    // Set Active Position Details
-    session.activePosition = {
-      symbol,
-      companyName: proposal.companyName,
-      qty: totalExecutedQty || 1,
-      entryPrice,
-      currentPrice: entryPrice,
-      entryValue: (totalExecutedQty || 1) * entryPrice,
-      currentValue: (totalExecutedQty || 1) * entryPrice,
-      unrealizedPl: 0,
-      unrealizedPlPct: 0,
-      supportLevel,
-      targetPrice,
-      catalystDate: proposal.catalystDate,
-      catalystEvent: proposal.catalystEvent,
-      earningsDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0], // Estimated default
-      status: "NORMAL",
-      enteredAt: new Date().toISOString(),
-      hasBullishFVG: false,
-      bullishFVGPrice: 0,
-      isSMAPullback: proposal.isSMAPullback,
-      sma50Price: proposal.sma50Price,
-      supplyZone: proposal.supplyZone,
-      demandZone: proposal.demandZone,
-      avgVolume20d: proposal.avgVolume20d,
-      rsiStatus: proposal.rsiStatus,
-    };
 
     // Use Gemini with Search Grounding to find precise company earnings date to schedule the exit!
     await updatePreciseDatesForPosition(userId);
@@ -2860,10 +2874,9 @@ export async function executeExit(symbol: string, reason: string, userId?: strin
                 symbol,
                 qty: userQty.toString(),
                 side: "sell",
-                type: "limit",
-                limit_price: exitLimitPrice.toString(),
-                time_in_force: "gtc",
-                extended_hours: true,
+                type: "market",
+                time_in_force: "day",
+                extended_hours: false,
               };
               const sellRes = await alpacaUserFetch(creds as any, "/v2/orders", {
                 method: "POST",
@@ -2886,10 +2899,9 @@ export async function executeExit(symbol: string, reason: string, userId?: strin
         symbol,
         qty: trackerQty.toString(),
         side: "sell",
-        type: "limit",
-        limit_price: exitLimitPrice.toString(),
-        time_in_force: "gtc",
-        extended_hours: true,
+        type: "market",
+        time_in_force: "day",
+        extended_hours: false,
       };
       const sellRes = await alpacaFetch("/v2/orders", {
         method: "POST",

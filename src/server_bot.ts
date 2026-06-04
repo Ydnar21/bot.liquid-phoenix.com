@@ -2294,7 +2294,7 @@ async function runGeminiSentimentAgent(setup: StockSetup, userId?: string): Prom
     4. Geopolitical escalations involving Taiwanese/China trade war or sanctions (highly applicable to semiconductor and large tech firms)
     5. Regulatory bans.
 
-    Find any specific catalyst event scheduled within the next 14 days (e.g. key product launches, developer conferences, investor days, government contract hearings, etc.). Also check their estimated earnings date.
+    Find any specific catalyst event scheduled within the next 14 days (e.g. key product launches, developer conferences, investor days, government contract hearings, geopolitical events, sector conferences, IPOs, etc.). Also check their estimated earnings date.
 
     Instructions for JSON properties:
     - "sentimentScore": a number/float between -1.0 (highly negative) and +1.0 (highly positive).

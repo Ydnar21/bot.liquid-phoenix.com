@@ -41,6 +41,7 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
   const [robinhoodStoredDate, setRobinhoodStoredDate] = useState<string | null>(null);
   const storedDate = brokerType === "ALPACA" ? alpacaStoredDate : robinhoodStoredDate;
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
+  const [showAlpacaHelp, setShowAlpacaHelp] = useState(false);
 
   // Saved profile selectors
   const [hasSavedAlpaca, setHasSavedAlpaca] = useState(false);
@@ -1124,6 +1125,81 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
             </div>
           )}
         </form>
+
+        {/* Collapsible How-To Connect Section for Alpaca */}
+        {brokerType === "ALPACA" && (
+          <div className="mt-4 pt-4 border-t border-theme-border/20">
+            <button
+              type="button"
+              onClick={() => setShowAlpacaHelp(!showAlpacaHelp)}
+              className="w-full flex items-center justify-between text-[11px] text-zinc-400 font-mono font-bold uppercase tracking-wider hover:text-white transition-colors cursor-pointer"
+            >
+              <span className="flex items-center gap-2">
+                <HelpCircle className="w-3.5 h-3.5 text-theme-accent" />
+                <span>How to connect your account?</span>
+              </span>
+              <span className="text-[10px] text-zinc-500">
+                {showAlpacaHelp ? "✕ HIDE" : "+ SHOW DETAILED WALKTHROUGH"}
+              </span>
+            </button>
+
+            {showAlpacaHelp && (
+              <div className="mt-3 bg-neutral-900/60 border border-theme-border/40 rounded p-4 font-sans text-xs space-y-3 text-zinc-300 antialiased animate-fade-in">
+                <p className="font-bold text-white text-[11px] uppercase tracking-wider font-mono text-theme-accent">
+                  Alpaca Key Connection Walkthrough
+                </p>
+                <ol className="list-decimal list-outside pl-4 space-y-2 leading-relaxed">
+                  <li>
+                    Register or log in to your dashboard at{" "}
+                    <a
+                      href="https://alpaca.markets"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-theme-accent underline hover:text-orange-400 font-semibold"
+                    >
+                      Alpaca Markets
+                    </a>. If you don't have an account already, you must register and create a free <strong className="text-white">Paper Trading</strong> account in order to safely preview and test the bot's swing logic without risking real capital.
+                  </li>
+                  <li>
+                    Navigate to your account panel. Decide whether you want to trade with{" "}
+                    <strong className="text-white">Paper Trading</strong> (recommended first, simulated funds) or{" "}
+                    <strong className="text-white">Live Trading</strong>.
+                  </li>
+                  <li>
+                    Locate the <strong className="text-white">"Your API Keys"</strong> box on the right-hand panel of your dashboard.
+                  </li>
+                  <li>
+                    Click <strong className="text-white">"Generate Keys"</strong> (or "View") to reveal your keys.
+                  </li>
+                  <li>
+                    Copy and paste the <strong className="text-zinc-200">API Key ID</strong> into the first input box above, and the <strong className="text-zinc-200">Secret Key</strong> into the second box.
+                  </li>
+                  <li>
+                    Select the matching environment (Paper vs. Live) and click <strong className="text-zinc-200">Save & Sync</strong>, then click <strong className="text-zinc-200">Connect</strong> to bring indicators online!
+                  </li>
+                </ol>
+
+                <div className="bg-neutral-950 border-l-2 border-theme-accent p-3.5 mt-4 rounded-r font-mono text-[11px] space-y-1">
+                  <p className="text-white font-bold uppercase tracking-wider">
+                    Need Direct Assistance?
+                  </p>
+                  <p className="text-zinc-400 text-xs">
+                    If you encounter any key issues or require premium setup help, our team is standing by to resolve it:
+                  </p>
+                  <p className="pt-2 text-zinc-200 font-bold flex items-center gap-1.5 select-all">
+                    ✉️ Email:{" "}
+                    <a
+                      href="mailto:liquidphoenixinvesting@gmail.com"
+                      className="text-theme-accent hover:underline decoration-theme-accent font-semibold"
+                    >
+                      liquidphoenixinvesting@gmail.com
+                    </a>
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {false && (
           <div className="mt-6 pt-4 border-t border-zinc-800 space-y-4 font-mono animate-fade-in" id="mcp-client-guides-panel">

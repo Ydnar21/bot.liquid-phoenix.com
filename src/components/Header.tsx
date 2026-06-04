@@ -152,9 +152,9 @@ export default function Header({
                 ${alpacaAccount.equity?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
               <span className="text-gray-600">|</span>
-              <span className="text-gray-400 uppercase font-black">BUYING POWER:</span>
+              <span className="text-gray-400 uppercase font-black">CASH REMAINING:</span>
               <span className="text-white font-bold">
-                ${alpacaAccount.buying_power?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                ${alpacaAccount.cash?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
             </div>
           )}

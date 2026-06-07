@@ -28,8 +28,16 @@ interface FirestoreErrorInfo {
 }
 
 function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errMessage = error instanceof Error ? error.message : String(error);
+  if (
+    errMessage.includes("Exceeded maximum number of retries allowed") ||
+    errMessage.includes("Missing or insufficient permissions") ||
+    errMessage.includes("PERMISSION_DENIED")
+  ) {
+    return;
+  }
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: errMessage,
     authInfo: {
       userId: "server-bot",
     },
@@ -50,7 +58,8 @@ function isFirestoreDatabaseError(err: any): boolean {
     msg.includes("7 permission_denied") ||
     msg.includes("permission-denied") ||
     msg.includes("permission_denied") ||
-    msg.includes("insufficient permissions")
+    msg.includes("insufficient permissions") ||
+    msg.includes("exceeded maximum number of retries allowed")
   );
 }
 
@@ -284,21 +293,44 @@ export async function loadStateFromDisk() {
           }
         }
       } catch (err: any) {
-        const errMsg = err?.message || "";
-        if (errMsg.includes("PERMISSION_DENIED") || errMsg.includes("Missing or insufficient permissions")) {
-          console.log("[Firebase Server] Firestore load-backup bypassed due to credentials. Recovering state from local backup instead.");
+        if (isFirestoreDatabaseError(err)) {
+          switchToDefaultDatabase();
+          try {
+            const db = getDb();
+            if (db && typeof db.collection === "function") {
+              const snap = await db.collection("globalState").doc("trading").get();
+              if (snap.exists) {
+                const parsed = snap.data();
+                if (parsed) {
+                  if (parsed.botConfig) botConfig = { ...botConfig, ...parsed.botConfig };
+                  if (process.env.GEMINI_API_KEY && (!botConfig.GEMINI_API_KEY || botConfig.GEMINI_API_KEY === "MY_GEMINI_API_KEY")) {
+                    botConfig.GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+                  }
+                  if (parsed.activePosition !== undefined) activePosition = parsed.activePosition;
+                  if (parsed.closedTrades) closedTrades = parsed.closedTrades;
+                  if (parsed.botLogs) botLogs = parsed.botLogs;
+                  if (parsed.scannedSetups) scannedSetups = parsed.scannedSetups;
+                  if (parsed.botState) botState = { ...botState, ...parsed.botState };
+                  console.log("Trading State loaded successfully from FIRESTORE default fallback.");
+                  
+                  // Sync to cache file
+                  const d = { botConfig, activePosition, closedTrades, botLogs, scannedSetups, botState };
+                  fs.writeFileSync(DATA_FILE, JSON.stringify(d, null, 2), "utf-8");
+                  purgePassedEvents();
+                  return;
+                }
+              }
+            }
+          } catch (retryErr: any) {
+            console.warn(`Firestore default fallback load error: ${retryErr.message}. Relying on disk backup if available.`);
+          }
         } else {
           console.warn(`Firestore load error: ${err.message}. Relying on disk backup if available.`);
         }
       }
     }
   } catch (err: any) {
-    const errMsg = err?.message || "";
-    if (errMsg.includes("PERMISSION_DENIED") || errMsg.includes("Missing or insufficient permissions")) {
-      console.log("[Firebase Server] Firestore load bypassed due to credentials. Recovering state from local backup instead.");
-    } else {
-      console.warn("Failed to load state from Firestore, falling back to disk backup:", err.message);
-    }
+    console.warn("Failed to load state from Firestore, falling back to disk backup:", err.message);
   }
 
   try {
@@ -374,9 +406,10 @@ export function startFirestoreStateListener() {
         }
       }, (err) => {
         handleFirestoreError(err, OperationType.LIST, "globalState/trading");
-        console.warn("Firestore backup state snapshot listener error:", err.message);
-        if (err.message.includes("PERMISSION_DENIED") || err.message.includes("permission_denied") || err.message.includes("Error 7") || err.message.includes("insufficient permissions")) {
-          console.warn("[Firebase Server] Insufficient IAM permissions on snapshot listener. Unsubscribing to prevent warning logs; executing stable cached state loops with robust auto-fallbacks.");
+        if (!isFirestoreDatabaseError(err)) {
+          console.warn("Firestore backup state snapshot listener error:", err.message);
+        }
+        if (isFirestoreDatabaseError(err)) {
           if (typeof unsubscribe === "function") unsubscribe();
         }
       });
@@ -421,11 +454,22 @@ export function saveStateToDisk() {
         console.log("[Firebase Server] Trading state successfully synchronized to Firestore.");
       }
     } catch (err: any) {
-      const errMsg = err?.message || "";
-      if (errMsg.includes("PERMISSION_DENIED") || errMsg.includes("Missing or insufficient permissions")) {
-        console.log("[Firebase Server] Firestore synchronized backup bypassed due to credentials.");
+      if (isFirestoreDatabaseError(err)) {
+        switchToDefaultDatabase();
+        try {
+          const db = getDb();
+          if (db && typeof db.collection === "function") {
+            await db.collection("globalState").doc("trading").set({
+              ...data,
+              updatedAt: new Date().toISOString()
+            }, { merge: true });
+            console.log("[Firebase Server] Trading state successfully synchronized to Firestore default fallback.");
+          }
+        } catch (retryErr: any) {
+          console.log(`[Firebase Server] Note: State save to local backup utilized due to expected offline server mode: ${retryErr.message}`);
+        }
       } else {
-        console.log("[Firebase Server] Localized state cache file updated successfully.");
+        console.log(`[Firebase Server] Note: State save to local backup utilized due to expected offline server mode: ${err.message}`);
       }
     }
   }, 1000); // 1-second debounce
@@ -434,10 +478,14 @@ export function saveStateToDisk() {
 // Alpaca / Robinhood API Credential Structures
 interface UserCredentials {
   userId: string;
-  brokerType?: "ALPACA" | "ROBINHOOD";
+  brokerType?: "ALPACA_PAPER" | "ALPACA_LIVE" | "ALPACA" | "ROBINHOOD";
   ALPACA_API_KEY?: string;
   ALPACA_SECRET_KEY?: string;
   ALPACA_BASE_URL?: string;
+  ALPACA_PAPER_API_KEY?: string;
+  ALPACA_PAPER_SECRET_KEY?: string;
+  ALPACA_LIVE_API_KEY?: string;
+  ALPACA_LIVE_SECRET_KEY?: string;
   ROBINHOOD_API_KEY?: string;
   ROBINHOOD_PRIVATE_KEY?: string;
   ROBINHOOD_ACCOUNT_NUMBER?: string;
@@ -882,29 +930,43 @@ export async function ensureUserCredentialsLoaded(userId: string): Promise<void>
 // User-specific or Fallback credentials resolver
 export async function resolveCredentialsForUser(userId?: string): Promise<UserCredentials | null> {
   if (userId) {
+    const mapCreds = (parsed: any): UserCredentials => {
+      const isPaper = parsed.brokerType === "ALPACA_PAPER";
+      const isLive = parsed.brokerType === "ALPACA_LIVE";
+      const finalAlpacaAPI = isPaper ? parsed.ALPACA_PAPER_API_KEY : (isLive ? parsed.ALPACA_LIVE_API_KEY : parsed.ALPACA_API_KEY);
+      const finalAlpacaSecret = isPaper ? parsed.ALPACA_PAPER_SECRET_KEY : (isLive ? parsed.ALPACA_LIVE_SECRET_KEY : parsed.ALPACA_SECRET_KEY);
+      const finalAlpacaBase = isPaper ? "https://paper-api.alpaca.markets" : (isLive ? "https://api.alpaca.markets" : parsed.ALPACA_BASE_URL);
+
+      return {
+        userId,
+        brokerType: parsed.brokerType || "ALPACA",
+        ALPACA_API_KEY: finalAlpacaAPI,
+        ALPACA_SECRET_KEY: finalAlpacaSecret,
+        ALPACA_BASE_URL: finalAlpacaBase || "https://paper-api.alpaca.markets",
+        ALPACA_PAPER_API_KEY: parsed.ALPACA_PAPER_API_KEY,
+        ALPACA_PAPER_SECRET_KEY: parsed.ALPACA_PAPER_SECRET_KEY,
+        ALPACA_LIVE_API_KEY: parsed.ALPACA_LIVE_API_KEY,
+        ALPACA_LIVE_SECRET_KEY: parsed.ALPACA_LIVE_SECRET_KEY,
+        ROBINHOOD_API_KEY: parsed.ROBINHOOD_API_KEY,
+        ROBINHOOD_PRIVATE_KEY: parsed.ROBINHOOD_PRIVATE_KEY,
+        ROBINHOOD_ACCOUNT_NUMBER: parsed.ROBINHOOD_ACCOUNT_NUMBER,
+        ROBINHOOD_MCP_URL: parsed.ROBINHOOD_MCP_URL || "https://agent.robinhood.com/mcp/trading",
+        GEMINI_API_KEY: parsed.GEMINI_API_KEY,
+        CLAUDE_API_KEY: parsed.CLAUDE_API_KEY,
+        OPENAI_API_KEY: parsed.OPENAI_API_KEY,
+        ROBINHOOD_LLM_PROVIDER: parsed.ROBINHOOD_LLM_PROVIDER || "GEMINI",
+      };
+    };
+
     // 1. Try local offline fallback backup file
     const fallbackPath = `./private_creds_${userId}.json`;
     if (fs.existsSync(fallbackPath)) {
       try {
         const raw = fs.readFileSync(fallbackPath, "utf-8");
         const parsed = JSON.parse(raw);
-        if (parsed && (parsed.ALPACA_API_KEY || parsed.ROBINHOOD_MCP_URL || parsed.brokerType === "ROBINHOOD")) {
-          const credsObj: UserCredentials = {
-            userId,
-            brokerType: parsed.brokerType || "ALPACA",
-            ALPACA_API_KEY: parsed.ALPACA_API_KEY,
-            ALPACA_SECRET_KEY: parsed.ALPACA_SECRET_KEY,
-            ALPACA_BASE_URL: parsed.ALPACA_BASE_URL || "https://paper-api.alpaca.markets",
-            ROBINHOOD_API_KEY: parsed.ROBINHOOD_API_KEY,
-            ROBINHOOD_PRIVATE_KEY: parsed.ROBINHOOD_PRIVATE_KEY,
-            ROBINHOOD_ACCOUNT_NUMBER: parsed.ROBINHOOD_ACCOUNT_NUMBER,
-            ROBINHOOD_MCP_URL: parsed.ROBINHOOD_MCP_URL || "https://agent.robinhood.com/mcp/trading",
-            GEMINI_API_KEY: parsed.GEMINI_API_KEY,
-            CLAUDE_API_KEY: parsed.CLAUDE_API_KEY,
-            OPENAI_API_KEY: parsed.OPENAI_API_KEY,
-            ROBINHOOD_LLM_PROVIDER: parsed.ROBINHOOD_LLM_PROVIDER || "GEMINI",
-          };
-          return credsObj;
+
+        if (parsed && (parsed.ALPACA_API_KEY || parsed.ALPACA_PAPER_API_KEY || parsed.ALPACA_LIVE_API_KEY || parsed.ROBINHOOD_MCP_URL || parsed.brokerType === "ROBINHOOD")) {
+          return mapCreds(parsed);
         }
       } catch (e: any) {
         console.warn(`resolveCredentialsForUser local backup read error: ${e.message}`);
@@ -918,23 +980,8 @@ export async function resolveCredentialsForUser(userId?: string): Promise<UserCr
         const snap = await db.collection("users").doc(userId).collection("private").doc("credentials").get();
         if (snap.exists) {
           const data = snap.data();
-          if (data && (data.ALPACA_API_KEY || data.ROBINHOOD_MCP_URL || data.brokerType === "ROBINHOOD")) {
-            const credsObj: UserCredentials = {
-              userId,
-              brokerType: data.brokerType || "ALPACA",
-              ALPACA_API_KEY: data.ALPACA_API_KEY,
-              ALPACA_SECRET_KEY: data.ALPACA_SECRET_KEY,
-              ALPACA_BASE_URL: data.ALPACA_BASE_URL || "https://paper-api.alpaca.markets",
-              ROBINHOOD_API_KEY: data.ROBINHOOD_API_KEY,
-              ROBINHOOD_PRIVATE_KEY: data.ROBINHOOD_PRIVATE_KEY,
-              ROBINHOOD_ACCOUNT_NUMBER: data.ROBINHOOD_ACCOUNT_NUMBER,
-              ROBINHOOD_MCP_URL: data.ROBINHOOD_MCP_URL || "https://agent.robinhood.com/mcp/trading",
-              GEMINI_API_KEY: data.GEMINI_API_KEY,
-              CLAUDE_API_KEY: data.CLAUDE_API_KEY,
-              OPENAI_API_KEY: data.OPENAI_API_KEY,
-              ROBINHOOD_LLM_PROVIDER: data.ROBINHOOD_LLM_PROVIDER || "GEMINI",
-            };
-            return credsObj;
+          if (data && (data.ALPACA_API_KEY || data.ALPACA_PAPER_API_KEY || data.ALPACA_LIVE_API_KEY || data.ROBINHOOD_MCP_URL || data.brokerType === "ROBINHOOD")) {
+            return mapCreds(data);
           }
         }
       }
@@ -1998,8 +2045,11 @@ export async function scanForSetups(userId?: string) {
           continue;
         }
 
+        // Is this ticker touching the 200 SMA? (within 3% margin)
+        const isTouching200SMA = Math.abs(currentPrice - sma200) / sma200 <= 0.03;
+
         // Core Filter #1: Above 200 SMA (Python-monitored tickers bypass to execute raw rules)
-        if (currentPrice <= sma200 && !isPythonControlledTicker) {
+        if (currentPrice <= sma200 && !isPythonControlledTicker && !isTouching200SMA) {
           failed200SMACount++;
           failed200SMAList.push(ticker);
           continue;
@@ -2009,7 +2059,7 @@ export async function scanForSetups(userId?: string) {
         const highPrices = bars.map(b => b.h);
         const peakPrice = Math.max(...highPrices);
         const offPeakPct = ((peakPrice - currentPrice) / peakPrice) * 100;
-        if (offPeakPct <= 5 && !isPythonControlledTicker) {
+        if (offPeakPct <= 5 && !isPythonControlledTicker && !isTouching200SMA) {
           failedPullbackCount++;
           failedPullbackList.push(`${ticker}(${offPeakPct.toFixed(1)}%)`);
           continue;
@@ -2040,7 +2090,7 @@ export async function scanForSetups(userId?: string) {
         }
 
         const multiTimeframeTrendConfirmed = (weeklyTrendStatus === "BULLISH") && (dailyTrendStructure !== "WEAK");
-        if (!multiTimeframeTrendConfirmed && !isPythonControlledTicker) {
+        if (!multiTimeframeTrendConfirmed && !isPythonControlledTicker && !isTouching200SMA) {
           failedMTFTrendCount++;
           failedMTFTrendList.push(`${ticker}(W:${weeklyTrendStatus}, D:${dailyTrendStructure})`);
           continue;
@@ -2083,7 +2133,9 @@ export async function scanForSetups(userId?: string) {
           marketCapBillion: fun.marketCapBillion,
           reason: isPythonControlledTicker 
             ? `Python Strategy Rule matched: Satisfies "${customPythonFilename}" ruleset criteria (RSI target: < ${customPivotRsi}).`
-            : `Trend Pullback: Price above 200 SMA with ${offPeakPct.toFixed(1)}% price drop off Peak.`,
+            : isTouching200SMA 
+              ? `Contrarian 200 SMA Bounce: Price is validating structural support near its 200 SMA.`
+              : `Trend Pullback: Price above 200 SMA with ${offPeakPct.toFixed(1)}% price drop off Peak.`,
           volumeTrendRatio: Math.round(volumeTrendRatio * 100) / 100,
           entryVolumeRatio: Math.round(entryVolumeRatio * 100) / 100,
           supportLevel: Math.round(supportLevel * 100) / 100,
@@ -2294,7 +2346,12 @@ async function runGeminiSentimentAgent(setup: StockSetup, userId?: string): Prom
     4. Geopolitical escalations involving Taiwanese/China trade war or sanctions (highly applicable to semiconductor and large tech firms)
     5. Regulatory bans.
 
-    Find any specific catalyst event scheduled within the next 14 days (e.g. key product launches, developer conferences, investor days, government contract hearings, geopolitical events, sector conferences, IPOs, etc.). Also check their estimated earnings date.
+    Find any specific catalyst event scheduled within the next 14 days. We are not just looking for company-specific events. Include ANY OTHER upcoming future catalysts that could positively affect this stock, such as:
+    - Other stocks in the same sector having earnings soon (lifting the sector)
+    - Rumors of contracts being given out to the sector or this company
+    - Bills being pushed that will help certain sectors this company belongs to
+    - Any new product launches, conferences, or major macro events affecting the stock.
+    Also check their estimated earnings date.
 
     Instructions for JSON properties:
     - "sentimentScore": a number/float between -1.0 (highly negative) and +1.0 (highly positive).
@@ -2727,17 +2784,35 @@ export async function evaluateActivePosition(userId?: string) {
       return;
     }
 
+    // RULE: 200 SMA Hit Check
+    let sma200 = 0;
+    try {
+      const barsForSma = await fetchAlpacaBars(symbol, 200, userId);
+      if (barsForSma && barsForSma.length >= 200) {
+        sma200 = calculateSMA(barsForSma, 200);
+      }
+    } catch(e) {}
+
+    if (sma200 > 0 && currentPrice < sma200 * 0.99) {
+      addLog("ERROR", `RULE TRIGGERED: ${symbol} price $${currentPrice.toFixed(2)} hit or fell below its 200 SMA ($${sma200.toFixed(2)}). Exiting trade immediately.`, userId);
+      await executeExit(symbol, "200_SMA_HIT", userId);
+      return;
+    }
+
     // RULE: Catalyst date reached
     if (todayStr >= session.activePosition.catalystDate) {
-      const isProfitable = session.activePosition.unrealizedPlPct > 0;
-      if (isProfitable) {
-        addLog("SUCCESS", `Rule Triggered: Catalyst target date reached on ${session.activePosition.catalystDate} (${session.activePosition.catalystEvent}) and trade is profitable. Securing Buy Rumor / Sell News wins!`, userId);
-        await executeExit(symbol, "CATALYST_DAY_SELLING", userId);
-        return;
-      } else {
-        addLog("WARNING", `Catalyst date reached on ${session.activePosition.catalystDate} but position is underwater. Flagging for continuous evaluation.`, userId);
-        session.activePosition.status = "WARNING";
-        session.activePosition.reviewReason = "Catalyst date reached but position is unprofitable.";
+      const hasFuture = await runGeminiCatalystReevaluation(symbol, currentPrice, userId);
+      if (!hasFuture) {
+        const isProfitable = session.activePosition.unrealizedPlPct > 0;
+        if (isProfitable) {
+          addLog("SUCCESS", `Rule Triggered: Catalyst target date reached on ${session.activePosition.catalystDate} (${session.activePosition.catalystEvent}) and trade is profitable. Securing Buy Rumor / Sell News wins!`, userId);
+          await executeExit(symbol, "CATALYST_DAY_SELLING", userId);
+          return;
+        } else {
+          addLog("WARNING", `Catalyst date reached on ${session.activePosition.catalystDate} but position is underwater. Flagging for continuous evaluation.`, userId);
+          session.activePosition.status = "WARNING";
+          session.activePosition.reviewReason = "Catalyst date reached but position is unprofitable.";
+        }
       }
     }
 
@@ -2760,6 +2835,66 @@ export async function evaluateActivePosition(userId?: string) {
   } catch (err: any) {
     addLog("ERROR", `Failed evaluating open tracker status: ${err.message}`, userId);
   }
+}
+
+// Check if the stock has future catalysts keeping it afloat
+async function runGeminiCatalystReevaluation(symbol: string, currentPrice: number, userId?: string): Promise<boolean> {
+  const session = getUserSession(userId);
+  if (!session.activePosition) return false;
+  
+  const geminiKey = session.botConfig.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+  if (!geminiKey) return false;
+
+  try {
+    addLog("INFO", `[CATALYST ENGINE] Primary catalyst date reached for ${symbol}. Searching for future catalysts before executing sell...`, userId);
+    
+    // Check if there are other catalysts in the future that could affect the stock
+    const ai = new GoogleGenAI({
+      apiKey: geminiKey,
+      httpOptions: { headers: { "User-Agent": "aistudio-build" } },
+    });
+
+    const prompt = `Our stock trading bot is deciding whether to SELL the stock ${symbol} (${session.activePosition.companyName}). Current price: $${currentPrice.toFixed(2)}.
+    The original catalyst date has passed or is today. 
+    Conduct a real-time web search. Identify if there are ANY OTHER upcoming future catalysts that could positively affect this stock. This includes:
+    - Other stocks in the same sector having earnings soon (lifting the sector)
+    - Rumors of contracts being given out to the sector or this company
+    - Bills being pushed that will help certain sectors this company belongs to
+    - Any new product launches, conferences, or major macro events affecting the stock.
+
+    Do NOT include the company's own earnings if they are the catalyst, we do not hold through earnings.
+
+    Determine if a future catalyst exists within the next 2-4 weeks.
+    
+    Format your output EXACTLY as this JSON object structure:
+    {
+      "hasFutureCatalyst": true or false,
+      "futureCatalystEvent": "Brief description of the new future catalyst. Empty if none.",
+      "futureCatalystDate": "YYYY-MM-DD of the new expected catalyst. Empty if none."
+    }`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: prompt,
+      config: {
+        tools: [{ googleSearch: {} }],
+        responseMimeType: "application/json",
+      },
+    });
+
+    const parsed = cleanAndParseJSON(response.text?.trim() || "{}");
+    if (parsed.hasFutureCatalyst && parsed.futureCatalystEvent && parsed.futureCatalystDate && session.activePosition) {
+      session.activePosition.catalystDate = parsed.futureCatalystDate;
+      session.activePosition.catalystEvent = parsed.futureCatalystEvent;
+      addLog("SUCCESS", `[CATALYST ENGINE] Identified NEW future catalyst protecting ${symbol}: ${parsed.futureCatalystEvent} on ${parsed.futureCatalystDate}. Holding position instead of selling.`, userId);
+      saveUserStateToDisk(userId);
+      return true;
+    }
+  } catch (err: any) {
+    console.warn("Gemini catalyst reevaluation error:", err.message);
+  }
+  
+  return false;
 }
 
 // Ask Gemini to audit risk after a support level breach

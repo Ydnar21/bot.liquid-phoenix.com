@@ -14,11 +14,64 @@ export default function PerformanceHistory({ history }: PerformanceHistoryProps)
   const losingTrades = history.filter((t) => t.pl <= 0);
   
   const totalEvaluated = totalTrades;
-  const winRate = totalTrades > 0 ? (profitableTrades.length / totalTrades) * 105 / 1.05 : 0; // Simplified exactly to (profitable / total) * 100
-  const winRateNormalized = totalTrades > 0 ? (profitableTrades.length / totalTrades) * 100 : 0;
+  const winRate = totalTrades > 0 ? (profitableTrades.length / totalTrades) * 100 : 0;
   const totalProfitLossList = history.reduce((acc, t) => acc + t.pl, 0);
 
-  // Advanced P&L analytics
+  // Advanced P&L analytics (Average Holding Time calculation)
+  const computeHoldingTimeMs = (entered: string, exited: string) => {
+    if (!entered || !exited) return 0;
+    const entryDate = new Date(entered);
+    const exitDate = new Date(exited);
+    const diffMs = exitDate.getTime() - entryDate.getTime();
+    return isNaN(diffMs) || diffMs <= 0 ? 0 : diffMs;
+  };
+
+  const totalHoldingMs = history.reduce((acc, t) => acc + computeHoldingTimeMs(t.enteredAt, t.exitedAt), 0);
+  const avgHoldingMs = totalTrades > 0 ? totalHoldingMs / totalTrades : 0;
+
+  const formatDurationFriendly = (ms: number) => {
+    if (!ms || ms <= 0) return "N/A";
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+
+    if (days > 0) {
+      const remainingHours = hours % 24;
+      return `${days}d ${remainingHours}h`;
+    }
+    if (hours > 0) {
+      const remainingMinutes = minutes % 60;
+      return `${hours}h ${remainingMinutes}m`;
+    }
+    if (minutes > 0) {
+      return `${minutes}m`;
+    }
+    return `${seconds}s`;
+  };
+
+  const avgHoldingTimeStr = formatDurationFriendly(avgHoldingMs);
+
+  // Aggregate stats per Stock Ticker (Which stocks made how much)
+  const tickerStatsMap = history.reduce((acc, t) => {
+    const sym = t.symbol.toUpperCase();
+    if (!acc[sym]) {
+      acc[sym] = {
+        symbol: sym,
+        companyName: t.companyName,
+        totalPl: 0,
+        tradeCount: 0,
+        winCount: 0,
+      };
+    }
+    acc[sym].totalPl += t.pl;
+    acc[sym].tradeCount += 1;
+    if (t.pl > 0) acc[sym].winCount += 1;
+    return acc;
+  }, {} as Record<string, { symbol: string; companyName: string; totalPl: number; tradeCount: number; winCount: number }>);
+
+  const sortedTickerStats = Object.values(tickerStatsMap).sort((a, b) => b.totalPl - a.totalPl);
+
   const grossProfit = profitableTrades.reduce((acc, t) => acc + t.pl, 0);
   const grossLoss = losingTrades.reduce((acc, t) => acc + t.pl, 0);
   const averageProfitPct = totalTrades > 0 ? history.reduce((acc, t) => acc + t.plPct, 0) / totalTrades : 0;
@@ -83,11 +136,11 @@ export default function PerformanceHistory({ history }: PerformanceHistoryProps)
       </div>
 
       {totalTrades > 0 && (
-        <div className="bg-theme-input/20 border border-theme-border/60 rounded-lg p-5">
+        <div className="bg-theme-input/20 border border-theme-border/60 rounded-lg p-5 space-y-4">
           <h3 className="text-xs font-bold text-gray-300 uppercase tracking-wider font-mono mb-3.5 text-center sm:text-left">
             Profit &amp; Loss Performance Matrix
           </h3>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
             {/* Stat 1: Net Realized PL */}
             <div className="bg-theme-input/40 border border-theme-border/30 rounded p-3">
               <span className="text-[10px] text-gray-500 block uppercase font-mono tracking-wider">Net Realized P&amp;L</span>
@@ -115,7 +168,18 @@ export default function PerformanceHistory({ history }: PerformanceHistoryProps)
               </span>
             </div>
 
-            {/* Stat 3: Gross Breakdown */}
+            {/* Stat 3: Avg Time Held */}
+            <div className="bg-theme-input/40 border border-theme-border/30 rounded p-3">
+              <span className="text-[10px] text-gray-500 block uppercase font-mono tracking-wider">Avg Time Held</span>
+              <span className="text-lg font-black font-mono text-white block mt-1">
+                {avgHoldingTimeStr}
+              </span>
+              <span className="text-[9px] text-gray-400 block mt-0.5 font-mono">
+                Duration pool: {totalTrades} run{totalTrades > 1 ? "s" : ""}
+              </span>
+            </div>
+
+            {/* Stat 4: Gross Breakdown */}
             <div className="bg-theme-input/40 border border-theme-border/30 rounded p-3">
               <span className="text-[10px] text-gray-500 block uppercase font-mono tracking-wider">Gross Profit/Loss</span>
               <span className="text-xs font-mono font-bold block mt-1.5 text-emerald-400">
@@ -126,7 +190,7 @@ export default function PerformanceHistory({ history }: PerformanceHistoryProps)
               </span>
             </div>
 
-            {/* Stat 4: Averages */}
+            {/* Stat 5: Averages */}
             <div className="bg-theme-input/40 border border-theme-border/30 rounded p-3">
               <span className="text-[10px] text-gray-500 block uppercase font-mono tracking-wider">Average Trade Return</span>
               <span className={`text-lg font-black font-mono block mt-1 ${averageProfitUsd >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
@@ -140,7 +204,7 @@ export default function PerformanceHistory({ history }: PerformanceHistoryProps)
 
           {/* Quick extremes showcase */}
           {(bestTrade || worstTrade) && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4 pt-4 border-t border-theme-border/30 text-[11px] font-mono">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-2 pt-3 border-t border-theme-border/30 text-[11px] font-mono">
               {bestTrade && (
                 <div className="flex items-center justify-between text-gray-400">
                   <span className="uppercase text-[9px] text-gray-500">Top Performing Run</span>
@@ -159,6 +223,38 @@ export default function PerformanceHistory({ history }: PerformanceHistoryProps)
               )}
             </div>
           )}
+
+          {/* New Ticker Profitability Distribution Section ("which stocks made how much") */}
+          <div className="mt-4 pt-4 border-t border-theme-border/30">
+            <h4 className="text-[10px] text-zinc-400 font-mono font-bold uppercase tracking-wider mb-2.5">
+              Stock Profitability Distribution (Which Stocks Made How Much)
+            </h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 max-h-[220px] overflow-y-auto custom-scrollbar p-1">
+              {sortedTickerStats.map((stat) => {
+                const isProfit = stat.totalPl >= 0;
+                const winRateTicker = stat.tradeCount > 0 ? (stat.winCount / stat.tradeCount) * 100 : 0;
+                return (
+                  <div key={stat.symbol} className="bg-neutral-900/60 border border-theme-border/20 rounded p-2.5 flex items-center justify-between text-xs font-mono hover:border-theme-border/40 transition-colors">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-1.5 h-8 rounded-full ${isProfit ? "bg-emerald-500/80" : "bg-rose-500/80"}`} />
+                      <div>
+                        <div className="text-white font-bold">{stat.symbol}</div>
+                        <div className="text-[9px] text-zinc-400 font-sans truncate max-w-[140px]">{stat.companyName}</div>
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className={`text-xs font-bold ${isProfit ? "text-emerald-400" : "text-rose-400"}`}>
+                        {isProfit ? "+" : ""}${stat.totalPl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                      <div className="text-[9px] text-zinc-500 font-mono">
+                        {winRateTicker.toFixed(0)}% wins &bull; {stat.tradeCount}T
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
       )}
 
@@ -182,6 +278,8 @@ export default function PerformanceHistory({ history }: PerformanceHistoryProps)
               const isPlProfit = trade.pl >= 0;
               const entryDT = formatDateTime(trade.enteredAt);
               const exitDT = formatDateTime(trade.exitedAt);
+              const durationMs = computeHoldingTimeMs(trade.enteredAt, trade.exitedAt);
+              const durationStr = formatDurationFriendly(durationMs);
 
               return (
                 <div key={trade.id} className="bg-theme-input/40 border border-theme-border rounded-lg p-4 space-y-4 hover:border-theme-border/80 transition-colors">
@@ -231,6 +329,13 @@ export default function PerformanceHistory({ history }: PerformanceHistoryProps)
                         <span className="text-[8px] text-gray-500 block leading-none">{exitDT.time}</span>
                       </div>
                     </div>
+
+                    {durationMs > 0 && (
+                      <div className="bg-neutral-950 border border-theme-border/20 px-2.5 py-1.5 rounded text-[10px] font-mono text-zinc-400 flex items-center gap-1.5 justify-center">
+                        <span>🕒 Holding Duration:</span>
+                        <span className="text-theme-accent font-bold">{durationStr}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -254,6 +359,7 @@ export default function PerformanceHistory({ history }: PerformanceHistoryProps)
                   const isPlProfit = trade.pl >= 0;
                   const entryDT = formatDateTime(trade.enteredAt);
                   const exitDT = formatDateTime(trade.exitedAt);
+                  const durationMs = computeHoldingTimeMs(trade.enteredAt, trade.exitedAt);
 
                   return (
                     <tr key={trade.id} className="hover:bg-theme-input/20 transition-colors">
@@ -287,6 +393,12 @@ export default function PerformanceHistory({ history }: PerformanceHistoryProps)
                             <span className="text-[9px] text-gray-500 block leading-tight font-light">{exitDT.time}</span>
                           </div>
                         </div>
+                        {durationMs > 0 && (
+                          <div className="text-[9.5px] text-zinc-500 font-mono mt-1 text-center font-bold uppercase tracking-wider flex items-center justify-center gap-1">
+                            <span>🕒 Held for:</span>
+                            <span className="text-zinc-300 font-semibold">{formatDurationFriendly(durationMs)}</span>
+                          </div>
+                        )}
                       </td>
 
                       {/* Entry cost / fill metrics */}

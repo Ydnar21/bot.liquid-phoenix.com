@@ -44,6 +44,8 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
   const [showAlpacaHelp, setShowAlpacaHelp] = useState(false);
 
   // Saved profile selectors
+  const [hasSavedAlpacaPaper, setHasSavedAlpacaPaper] = useState(false);
+  const [hasSavedAlpacaLive, setHasSavedAlpacaLive] = useState(false);
   const [hasSavedAlpaca, setHasSavedAlpaca] = useState(false);
   const [hasSavedRobinhood, setHasSavedRobinhood] = useState(false);
   const [selectedProfile, setSelectedProfile] = useState<"SAVED_ALPACA" | "SAVED_ROBINHOOD" | "NEW">("NEW");
@@ -51,10 +53,28 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
   const [selectedInstructionTab, setSelectedInstructionTab] = useState<"CLAUDE_CODE" | "CLAUDE_DESKTOP" | "CHATGPT" | "CODEX" | "CODEX_CLI">("CLAUDE_CODE");
 
   // Keep a separate backup/stored copy of loaded credentials to prevent form clear wipes
+  const [storedAlpacaPaperKey, setStoredAlpacaPaperKey] = useState("");
+  const [storedAlpacaPaperSecret, setStoredAlpacaPaperSecret] = useState("");
+  const [storedAlpacaLiveKey, setStoredAlpacaLiveKey] = useState("");
+  const [storedAlpacaLiveSecret, setStoredAlpacaLiveSecret] = useState("");
   const [storedAlpacaKey, setStoredAlpacaKey] = useState("");
   const [storedAlpacaSecret, setStoredAlpacaSecret] = useState("");
   const [storedBaseUrl, setStoredBaseUrl] = useState("https://paper-api.alpaca.markets");
   const [storedRobinhoodApiKey, setStoredRobinhoodApiKey] = useState("");
+
+  useEffect(() => {
+    if (baseUrl === "https://paper-api.alpaca.markets") {
+      setApiKey(storedAlpacaPaperKey);
+      setApiSecret(storedAlpacaPaperSecret);
+      setStoredAlpacaKey(storedAlpacaPaperKey);
+      setStoredAlpacaSecret(storedAlpacaPaperSecret);
+    } else {
+      setApiKey(storedAlpacaLiveKey);
+      setApiSecret(storedAlpacaLiveSecret);
+      setStoredAlpacaKey(storedAlpacaLiveKey);
+      setStoredAlpacaSecret(storedAlpacaLiveSecret);
+    }
+  }, [baseUrl, selectedProfile, brokerType, storedAlpacaPaperKey, storedAlpacaPaperSecret, storedAlpacaLiveKey, storedAlpacaLiveSecret]);
   const [storedRobinhoodPrivateKey, setStoredRobinhoodPrivateKey] = useState("");
   const [storedRobinhoodAccountNumber, setStoredRobinhoodAccountNumber] = useState("");
   const [storedRobinhoodMcpUrl, setStoredRobinhoodMcpUrl] = useState("https://agent.robinhood.com/mcp/trading");
@@ -90,6 +110,10 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
           // Save backup copies
           setStoredAlpacaKey(data.ALPACA_API_KEY || "");
           setStoredAlpacaSecret(data.ALPACA_SECRET_KEY || "");
+          setStoredAlpacaPaperKey(data.ALPACA_PAPER_API_KEY || (data.ALPACA_BASE_URL === "https://paper-api.alpaca.markets" ? data.ALPACA_API_KEY : "") || "");
+          setStoredAlpacaPaperSecret(data.ALPACA_PAPER_SECRET_KEY || (data.ALPACA_BASE_URL === "https://paper-api.alpaca.markets" ? data.ALPACA_SECRET_KEY : "") || "");
+          setStoredAlpacaLiveKey(data.ALPACA_LIVE_API_KEY || (data.ALPACA_BASE_URL !== "https://paper-api.alpaca.markets" ? data.ALPACA_API_KEY : "") || "");
+          setStoredAlpacaLiveSecret(data.ALPACA_LIVE_SECRET_KEY || (data.ALPACA_BASE_URL !== "https://paper-api.alpaca.markets" ? data.ALPACA_SECRET_KEY : "") || "");
           setStoredBaseUrl(data.ALPACA_BASE_URL || "https://paper-api.alpaca.markets");
           setStoredRobinhoodApiKey(data.ROBINHOOD_API_KEY || "");
           setStoredRobinhoodPrivateKey(data.ROBINHOOD_PRIVATE_KEY || "");
@@ -147,6 +171,10 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
               // Save backup copies
               setStoredAlpacaKey(data.ALPACA_API_KEY || "");
               setStoredAlpacaSecret(data.ALPACA_SECRET_KEY || "");
+              setStoredAlpacaPaperKey(data.ALPACA_PAPER_API_KEY || (data.ALPACA_BASE_URL === "https://paper-api.alpaca.markets" ? data.ALPACA_API_KEY : "") || "");
+              setStoredAlpacaPaperSecret(data.ALPACA_PAPER_SECRET_KEY || (data.ALPACA_BASE_URL === "https://paper-api.alpaca.markets" ? data.ALPACA_SECRET_KEY : "") || "");
+              setStoredAlpacaLiveKey(data.ALPACA_LIVE_API_KEY || (data.ALPACA_BASE_URL !== "https://paper-api.alpaca.markets" ? data.ALPACA_API_KEY : "") || "");
+              setStoredAlpacaLiveSecret(data.ALPACA_LIVE_SECRET_KEY || (data.ALPACA_BASE_URL !== "https://paper-api.alpaca.markets" ? data.ALPACA_SECRET_KEY : "") || "");
               setStoredBaseUrl(data.ALPACA_BASE_URL || "https://paper-api.alpaca.markets");
               setStoredRobinhoodApiKey(data.ROBINHOOD_API_KEY || "");
               setStoredRobinhoodPrivateKey(data.ROBINHOOD_PRIVATE_KEY || "");
@@ -303,6 +331,10 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
           brokerType: hasSavedAlpaca ? "ALPACA" : "ROBINHOOD",
           ALPACA_API_KEY: storedAlpacaKey || "",
           ALPACA_SECRET_KEY: storedAlpacaSecret || "",
+          ALPACA_PAPER_API_KEY: "",
+          ALPACA_PAPER_SECRET_KEY: "",
+          ALPACA_LIVE_API_KEY: "",
+          ALPACA_LIVE_SECRET_KEY: "",
           ALPACA_BASE_URL: baseUrl || "https://paper-api.alpaca.markets",
           ROBINHOOD_API_KEY: "",
           ROBINHOOD_PRIVATE_KEY: "",
@@ -388,6 +420,10 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
             brokerType: "ALPACA",
             ALPACA_API_KEY: storedAlpacaKey,
             ALPACA_SECRET_KEY: storedAlpacaSecret,
+            ALPACA_PAPER_API_KEY: storedAlpacaPaperKey,
+            ALPACA_PAPER_SECRET_KEY: storedAlpacaPaperSecret,
+            ALPACA_LIVE_API_KEY: storedAlpacaLiveKey,
+            ALPACA_LIVE_SECRET_KEY: storedAlpacaLiveSecret,
             ALPACA_BASE_URL: baseUrl,
             ROBINHOOD_API_KEY: storedRobinhoodApiKey,
             ROBINHOOD_PRIVATE_KEY: storedRobinhoodPrivateKey,
@@ -405,6 +441,10 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
             brokerType: "ROBINHOOD",
             ALPACA_API_KEY: storedAlpacaKey,
             ALPACA_SECRET_KEY: storedAlpacaSecret,
+            ALPACA_PAPER_API_KEY: storedAlpacaPaperKey,
+            ALPACA_PAPER_SECRET_KEY: storedAlpacaPaperSecret,
+            ALPACA_LIVE_API_KEY: storedAlpacaLiveKey,
+            ALPACA_LIVE_SECRET_KEY: storedAlpacaLiveSecret,
             ALPACA_BASE_URL: storedBaseUrl,
             ROBINHOOD_API_KEY: storedRobinhoodApiKey,
             ROBINHOOD_PRIVATE_KEY: storedRobinhoodPrivateKey,
@@ -423,6 +463,10 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
               brokerType,
               ALPACA_API_KEY: apiKey || storedAlpacaKey,
               ALPACA_SECRET_KEY: apiSecret || storedAlpacaSecret,
+              ALPACA_PAPER_API_KEY: baseUrl === "https://paper-api.alpaca.markets" ? (apiKey || storedAlpacaPaperKey) : storedAlpacaPaperKey,
+              ALPACA_PAPER_SECRET_KEY: baseUrl === "https://paper-api.alpaca.markets" ? (apiSecret || storedAlpacaPaperSecret) : storedAlpacaPaperSecret,
+              ALPACA_LIVE_API_KEY: baseUrl !== "https://paper-api.alpaca.markets" ? (apiKey || storedAlpacaLiveKey) : storedAlpacaLiveKey,
+              ALPACA_LIVE_SECRET_KEY: baseUrl !== "https://paper-api.alpaca.markets" ? (apiSecret || storedAlpacaLiveSecret) : storedAlpacaLiveSecret,
               ALPACA_BASE_URL: baseUrl,
               ROBINHOOD_API_KEY: storedRobinhoodApiKey,
               ROBINHOOD_PRIVATE_KEY: storedRobinhoodPrivateKey,
@@ -440,6 +484,10 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
               brokerType,
               ALPACA_API_KEY: storedAlpacaKey,
               ALPACA_SECRET_KEY: storedAlpacaSecret,
+              ALPACA_PAPER_API_KEY: storedAlpacaPaperKey,
+              ALPACA_PAPER_SECRET_KEY: storedAlpacaPaperSecret,
+              ALPACA_LIVE_API_KEY: storedAlpacaLiveKey,
+              ALPACA_LIVE_SECRET_KEY: storedAlpacaLiveSecret,
               ALPACA_BASE_URL: storedBaseUrl,
               ROBINHOOD_API_KEY: robinhoodApiKey || storedRobinhoodApiKey,
               ROBINHOOD_PRIVATE_KEY: robinhoodPrivateKey || storedRobinhoodPrivateKey,
@@ -881,8 +929,8 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
             type="button"
             onClick={() => {
               setBrokerType("ROBINHOOD");
-              setSelectedProfile("NEW");
-              setIsApplied(false);
+              setSelectedProfile(hasSavedRobinhood ? "SAVED_ROBINHOOD" : "NEW");
+              setIsApplied(hasSavedRobinhood);
             }}
             className={`py-2 text-[10px] font-mono font-bold rounded-md uppercase tracking-wider relative transition-all cursor-pointer ${
               brokerType === "ROBINHOOD"
@@ -890,7 +938,7 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
                 : "text-zinc-400 hover:text-white"
             }`}
           >
-            Robinhood MCP (Soon)
+            Robinhood MCP
           </button>
         </div>
 
@@ -1055,21 +1103,88 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
               </div>
             </>
           ) : (
-            <div className="bg-[#0b170e]/80 border border-emerald-500/25 rounded-md p-5 text-center space-y-4 font-mono select-none my-3 animate-fade-in" id="robinhood-in-development-card">
-              <div className="w-12 h-12 bg-emerald-950/40 border border-emerald-500/30 rounded-full flex items-center justify-center text-[#00c805] text-xs font-black mx-auto animate-pulse">
-                RH
-              </div>
-              <h4 className="text-sm font-bold text-white uppercase tracking-wider">Robinhood Integration in Development</h4>
-              <p className="text-xs text-zinc-400 leading-relaxed max-w-sm mx-auto">
-                We are actively building our secure Model Context Protocol (MCP) live gateway for Robinhood brokerage. This will allow the swing bot to coordinate trades securely with high-fidelity Robinhood sessions soon.
-              </p>
-              <div className="inline-block px-3 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded text-[9px] font-bold uppercase tracking-wider">
-                Active Engineering Phase
-              </div>
-              <p className="text-[10px] text-zinc-500 max-w-xs mx-auto leading-relaxed">
-                Secure token custody, same-session authentication, and compliance boundaries are being thoroughly audited. Please connect your Alpaca paper or live credentials in the meantime.
-              </p>
-            </div>
+            <>
+              {selectedProfile === "SAVED_ROBINHOOD" ? (
+                <div className="bg-emerald-950/10 border border-emerald-500/20 rounded p-4 text-center text-xs text-emerald-400 font-mono space-y-1.5 animate-fade-in" id="secured-robinhood-profile-card">
+                  <ShieldCheck className="w-6 h-6 text-[#00c805] mx-auto animate-pulse" />
+                  <p className="font-bold uppercase tracking-wider text-[11px]">Active Profile: Secured Robinhood</p>
+                  <p className="text-zinc-400 text-[10px] leading-relaxed">
+                    Credentials loaded and held securely. Click the "Connect" button below to active asset scanning and trade workflows.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  {/* Robinhood Account Number */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] text-gray-400 block uppercase font-mono tracking-wider flex items-center gap-1.5">
+                      <Key className="w-3 h-3 text-[#00c805]" /> Account Number
+                    </label>
+                    <div className="relative flex items-center">
+                      <input
+                        type={showApiKey ? "text" : "password"}
+                        value={robinhoodAccountNumber}
+                        onChange={(e) => setRobinhoodAccountNumber(e.target.value)}
+                        placeholder="e.g. 123456789"
+                        className="w-full bg-theme-input border border-theme-border rounded pl-3 pr-10 py-1.5 text-xs text-[#00c805] font-mono focus:outline-none focus:border-emerald-500/50"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowApiKey(!showApiKey)}
+                        className="absolute right-2 px-1.5 py-1 text-gray-400 hover:text-white transition-colors cursor-pointer"
+                      >
+                        {showApiKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Robinhood API Key */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] text-gray-400 block uppercase font-mono tracking-wider flex items-center gap-1.5">
+                      <Key className="w-3 h-3 text-[#00c805]" /> API Key
+                    </label>
+                    <div className="relative flex items-center">
+                      <input
+                        type={showApiSecret ? "text" : "password"}
+                        value={robinhoodApiKey}
+                        onChange={(e) => setRobinhoodApiKey(e.target.value)}
+                        placeholder="e.g. RH_****"
+                        className="w-full bg-theme-input border border-theme-border rounded pl-3 pr-10 py-1.5 text-xs text-[#00c805] font-mono focus:outline-none focus:border-emerald-500/50"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowApiSecret(!showApiSecret)}
+                        className="absolute right-2 px-1.5 py-1 text-gray-400 hover:text-white transition-colors cursor-pointer"
+                      >
+                        {showApiSecret ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Robinhood Private Key */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] text-gray-400 block uppercase font-mono tracking-wider flex items-center gap-1.5">
+                      <ShieldCheck className="w-3 h-3 text-[#00c805]" /> Private / Secret Key
+                    </label>
+                    <div className="relative flex items-center">
+                      <input
+                        type={showRhPrivateKey ? "text" : "password"}
+                        value={robinhoodPrivateKey}
+                        onChange={(e) => setRobinhoodPrivateKey(e.target.value)}
+                        placeholder="Base64 or ECDSA string..."
+                        className="w-full bg-theme-input border border-theme-border rounded pl-3 pr-10 py-1.5 text-xs text-[#00c805] font-mono focus:outline-none focus:border-emerald-500/50"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowRhPrivateKey(!showRhPrivateKey)}
+                        className="absolute right-2 px-1.5 py-1 text-gray-400 hover:text-white transition-colors cursor-pointer"
+                      >
+                        {showRhPrivateKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </>
           )}
 
           {/* Optional News API Key */}
@@ -1088,42 +1203,40 @@ export default function Settings({ config, onSaveConfig, currentUser }: Settings
             </p>
           </div>
 
-          {brokerType === "ALPACA" && (
-            <div className="grid grid-cols-2 gap-3 mt-6">
-              {(config.isConnectionActive && hasSavedAlpaca) ? (
-                <button
-                  type="button"
-                  onClick={handleDisconnect}
-                  disabled={loading}
-                  className="w-full bg-neutral-900 hover:bg-neutral-800 text-red-500 border border-red-950/50 hover:border-red-500/50 disabled:opacity-50 px-4 py-2.5 rounded text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:cursor-wait"
-                  id="btn-disconnect-settings"
-                >
-                  <ShieldCheck className="w-3.5 h-3.5" />
-                  <span>Disconnect</span>
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleConnect}
-                  disabled={loading}
-                  className="w-full bg-emerald-950/40 hover:bg-emerald-900/40 text-emerald-400 border border-emerald-950/50 hover:border-emerald-500/50 disabled:opacity-50 px-4 py-2.5 rounded text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:cursor-wait font-bold"
-                  id="btn-connect-settings"
-                >
-                  <ShieldCheck className="w-3.5 h-3.5" />
-                  <span>Connect</span>
-                </button>
-              )}
-
+          <div className="grid grid-cols-2 gap-3 mt-6">
+            {(config.isConnectionActive && ((brokerType === "ALPACA" && hasSavedAlpaca) || (brokerType === "ROBINHOOD" && hasSavedRobinhood))) ? (
               <button
-                type="submit"
+                type="button"
+                onClick={handleDisconnect}
                 disabled={loading}
-                className="w-full disabled:opacity-50 text-black px-4 py-2.5 rounded text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-lg disabled:cursor-wait bg-theme-accent hover:bg-orange-600"
+                className="w-full bg-neutral-900 hover:bg-neutral-800 text-red-500 border border-red-950/50 hover:border-red-500/50 disabled:opacity-50 px-4 py-2.5 rounded text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:cursor-wait"
+                id="btn-disconnect-settings"
               >
-                <Save className="w-3.5 h-3.5" />
-                <span>{loading ? "Syncing..." : isSaved ? "Saved!" : "Save & Sync"}</span>
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>Disconnect</span>
               </button>
-            </div>
-          )}
+            ) : (
+              <button
+                type="button"
+                onClick={handleConnect}
+                disabled={loading}
+                className="w-full bg-emerald-950/40 hover:bg-emerald-900/40 text-emerald-400 border border-emerald-950/50 hover:border-emerald-500/50 disabled:opacity-50 px-4 py-2.5 rounded text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:cursor-wait font-bold"
+                id="btn-connect-settings"
+              >
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>Connect</span>
+              </button>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full disabled:opacity-50 text-black px-4 py-2.5 rounded text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-lg disabled:cursor-wait bg-theme-accent hover:bg-orange-600"
+            >
+              <Save className="w-3.5 h-3.5" />
+              <span>{loading ? "Syncing..." : isSaved ? "Saved!" : "Save & Sync"}</span>
+            </button>
+          </div>
         </form>
 
         {/* Collapsible How-To Connect Section for Alpaca */}
